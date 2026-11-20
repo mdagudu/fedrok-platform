@@ -1,0 +1,27 @@
+{
+  "name": "fedrok-platform",
+  "version": "0.1.0",
+  "description": "Fedrok Layer 1 blockchain platform: Proof of Green consensus, FDK utility token, stablecoin-settled carbon credit marketplace, explorer and wallet.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "devnet": "node scripts/devnet.js",
+    "node": "node src/node.js",
+    "btc-sim": "node src/btc/simulator.js",
+    "demo": "node scripts/demo.js",
+    "build:demo": "node scripts/build-artifact.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@noble/curves": "2.0.1",
+    "@noble/hashes": "2.0.1",
+    "ws": "8.21.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
