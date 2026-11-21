@@ -5,15 +5,14 @@
 //     --api-port=8545 --p2p-port=30303 --peers=ws://127.0.0.1:30304 \
 //     --key=devnet/keys/generator1.key --btc=http://127.0.0.1:18443
 import fs from 'node:fs';
-import { Chain } from './node/chain.js';
+import { Chain } from './evm/chain.js';
 import { FileStorage } from './node/file-storage.js';
 import { BtcLightClient } from './node/btc-light-client.js';
 import { P2P } from './node/p2p.js';
 import { Api } from './node/api.js';
 import { addressFromPrivate } from './core/crypto.js';
-import { signTx } from './core/transaction.js';
-import { fdk, stable } from './core/units.js';
-import { MAX_BTC_HEADERS_PER_BLOCK } from './core/consensus.js';
+import { MAX_BTC_HEADERS_PER_BLOCK } from './core/btc.js';
+import { faucetSend } from './evm/faucet.js';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   const [k, ...v] = a.replace(/^--/, '').split('=');
@@ -38,6 +37,7 @@ const log = {
   warn: (...m) => console.warn(prefix, 'WARN', ...m),
 };
 const readKey = (f) => (f ? fs.readFileSync(f, 'utf8').trim() : null);
+const HEARTBEAT_MS = 30_000;
 
 class FedrokNode {
   constructor() {
@@ -67,22 +67,29 @@ class FedrokNode {
     });
   }
 
-  tryProduce() {
-    if (!this.btc.synced) return;
+  async tryProduce() {
+    if (!this.btc.synced || this.producing) return;
     const now = Date.now();
-    const slot = Math.floor(now / this.chain.state.params.blockTimeMs);
+    const bt = this.chain.state.params.blockTimeMs;
+    const slot = Math.floor(now / bt);
     if (slot === this.lastTriedSlot) return;
     // Give the previous slot's block a moment to arrive before claiming ours.
-    if (now % this.chain.state.params.blockTimeMs < 250) return;
+    if (now % bt < 250) return;
     this.lastTriedSlot = slot;
     const anchor = this.chain.state.pog.anchorHeight;
     const tip = this.btc.tip.height;
     const btcHeaders = this.btc.range(anchor, Math.min(tip, anchor + MAX_BTC_HEADERS_PER_BLOCK));
+    // Produce when there is something to record, or as a heartbeat.
+    const idle = this.chain.mempool.size === 0 && btcHeaders.length === 0 && now - this.chain.state.lastTimestamp < HEARTBEAT_MS;
+    if (idle) return;
+    this.producing = true;
     try {
-      const block = this.chain.produce({ timestamp: now, btcHeaders, privKey: this.validatorKey });
+      const block = await this.chain.produce({ timestamp: now, btcHeaders, privKey: this.validatorKey });
       if (block && block.header.txCount) log.info(`produced block ${block.header.height} with ${block.header.txCount} tx`);
     } catch (e) {
       log.warn(`block production failed: ${e.message}`);
+    } finally {
+      this.producing = false;
     }
   }
 
@@ -93,14 +100,7 @@ class FedrokNode {
   }
 
   async faucetSend(to) {
-    const from = addressFromPrivate(this.faucetKey);
-    const fee = this.chain.state.params.minFee.toString();
-    const base = this.chain.nextNonce(from);
-    const txs = [
-      signTx({ chainId: this.chain.state.chainId, type: 'transfer', nonce: base, fee, payload: { to, asset: 'FDK', amount: fdk(this.genesis.faucet?.fdk || '50').toString() } }, this.faucetKey),
-      signTx({ chainId: this.chain.state.chainId, type: 'transfer', nonce: base + 1, fee, payload: { to, asset: 'STABLE', amount: stable(this.genesis.faucet?.stable || '25000').toString() } }, this.faucetKey),
-    ];
-    return txs.map((t) => this.chain.addTx(t).hash);
+    return faucetSend(this.chain, this.faucetKey, to, this.genesis.faucet);
   }
 }
 

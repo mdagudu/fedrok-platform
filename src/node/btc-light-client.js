@@ -1,7 +1,7 @@
 // Bitcoin light client: follows the header chain and verifies linkage and
 // proof of work. Every Fedrok full node runs one (see spec section 8).
 import { EventEmitter } from 'node:events';
-import { btcHeaderHash, meetsDifficulty } from '../core/consensus.js';
+import { btcHeaderHash, meetsDifficulty } from '../core/btc.js';
 
 export class BtcLightClient extends EventEmitter {
   constructor({ url, difficulty, log = console }) {

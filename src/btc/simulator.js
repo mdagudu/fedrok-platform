@@ -12,12 +12,12 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { canonical } from '../core/crypto.js';
 import { generatePrivateKey, publicKeyOf, btcSimAddressOf, sha256Hex } from '../core/crypto.js';
-import { btcHeaderHash, meetsDifficulty } from '../core/consensus.js';
+import { btcHeaderHash, meetsDifficulty } from '../core/btc.js';
 import { MINER_PROFILES } from './profiles.js';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => a.replace(/^--/, '').split('=')));
 const PORT = Number(args.port || process.env.BTC_SIM_PORT || 18443);
-const BLOCK_MS = Number(args['block-ms'] || process.env.BTC_BLOCK_MS || 4000);
+const BLOCK_MS = Number(args['block-ms'] || process.env.BTC_BLOCK_MS || 10000);
 const DIFFICULTY = Number(args.difficulty || 3);
 const STATE_FILE = args.state || null;
 

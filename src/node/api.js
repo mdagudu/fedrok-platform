@@ -5,16 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { ApiCore, toJSON } from './api-core.js';
+import { bundleWeb } from './web-bundle.js';
 
 export { toJSON };
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.webp': 'image/webp' };
-const STATIC_ROOTS = [
-  ['/vendor/@noble/curves/', path.join(ROOT, 'node_modules/@noble/curves/')],
-  ['/vendor/@noble/hashes/', path.join(ROOT, 'node_modules/@noble/hashes/')],
-  ['/core/', path.join(ROOT, 'src/core/')],
-  ['/', path.join(ROOT, 'web/')],
-];
+const STATIC_ROOTS = [['/', path.join(ROOT, 'web/')]];
 
 export class Api extends ApiCore {
   constructor({ node, port, log = console }) {
@@ -70,6 +66,14 @@ export class Api extends ApiCore {
   }
 
   _static(p, res) {
+    if (p === '/app.js') {
+      // The web app is bundled on first request (ethers + EVM signing libraries).
+      this._bundle ||= bundleWeb('web/app.js', { minify: false });
+      return this._bundle.then((js) => {
+        res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-cache' });
+        res.end(js);
+      }, (e) => this._send(res, 500, { error: `web bundle failed: ${e.message}` }));
+    }
     for (const [prefix, dir] of STATIC_ROOTS) {
       if (!p.startsWith(prefix)) continue;
       let rel = decodeURIComponent(p.slice(prefix.length)) || 'index.html';

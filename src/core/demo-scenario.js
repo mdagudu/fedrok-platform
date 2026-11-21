@@ -2,7 +2,7 @@
 //   accredit green Bitcoin miners -> generators stake and link -> Proof of
 //   Green takes over block production -> auditors tokenise carbon credits ->
 //   developers list them for stablecoin -> a buyer pays in fUSD and retires.
-import { addressFromPrivate, signDigest, btcLinkMessage } from './crypto.js';
+import { addressFromPrivate, signRecoverable, btcLinkMessage } from './crypto.js';
 import { fdk, stable, tonnesToKg, formatFdk, formatStable } from './units.js';
 
 /**
@@ -22,7 +22,7 @@ export async function runDemoScenario(c, K, simMiners, log = console.log) {
     return Promise.all(sent.map((s) => c.wait(s.hash)));
   };
   const st = await c.status();
-  log(`Connected to ${st.node} (${st.chainId}) at height ${st.height}, mode: ${st.schedule.mode}`);
+  log(`Connected to ${st.node} (${st.network}, EVM chain id ${st.chainId}) at height ${st.height}, mode: ${st.schedule.mode}`);
 
   step('Funding participant wallets with FDK for network fees (devnet faucet)');
   const fund = [K.devPng, K.devKenya, K.devPeru, K.ownAurora, K.ownAndes, K.ownHighlands].filter(Boolean);
@@ -42,7 +42,7 @@ export async function runDemoScenario(c, K, simMiners, log = console.log) {
     const existing = (await c.get('/api/miners')).find((x) => x.btcAddress === m.address && x.active);
     if (existing) { minerIds.push(existing.id); continue; }
     const owner = addr(owners[i]);
-    const btcSig = signDigest(btcLinkMessage(m.address, owner, status.chainId), m.privKey);
+    const btcSig = signRecoverable(btcLinkMessage(m.address, owner, status.chainId, status.contracts.ProofOfGreen), m.privKey);
     accredit.push(() => c.send(K.auditor, 'miner_accredit', {
       name: m.name, btcAddress: m.address, btcPubKey: m.pubKey, btcSig, owner, units: m.units, auditDays: 365,
       site: m.site, energy: m.energy, reportRef: `ISO 14064-3 verification report FDK-AUD-2026-${String(i + 1).padStart(3, '0')}`,

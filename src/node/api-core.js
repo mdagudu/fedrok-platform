@@ -1,9 +1,21 @@
 // Transport-independent API: views, REST routes and JSON-RPC.
 // Used by the Node HTTP server and by the in-browser node.
-import { schedule, slotOf, leaderFor } from '../core/consensus.js';
-import { peekAccount, yearlyEmission } from '../core/state.js';
 import { isAddress } from '../core/crypto.js';
-import { gardenView, gardenStats, maintenanceStatus, isSteward, PACKAGES } from '../core/garden.js';
+import { peekAccount } from '../evm/indexer.js';
+import { gardenView, gardenStats, maintenanceStatus, PACKAGES } from '../evm/garden-views.js';
+import { EthRpc } from './eth-rpc.js';
+import { ARTIFACTS } from '../evm/contracts.js';
+
+/** Proof of Green schedule as computed by ProofOfGreen.schedule() (read model copy for display). */
+export function schedule(s) {
+  const pog = s.pog;
+  const m = pog.activeMiner && s.miners[pog.activeMiner];
+  const fresh = pog.lastGreenBtcHeight >= 0 && pog.anchorHeight - pog.lastGreenBtcHeight < s.params.greenWindow;
+  if (m && m.active && fresh && m.generators.length > 0) return { mode: 'green', miner: m.id, generators: m.generators };
+  return { mode: 'fallback', miner: null, generators: [s.fallbackValidator] };
+}
+export const slotOf = (timestamp, s) => Math.floor(timestamp / s.params.blockTimeMs);
+export const leaderFor = (sched, slot) => sched.generators[slot % sched.generators.length];
 
 const R = (code, body) => ({ code, body });
 export const toJSON = (v) => JSON.stringify(v, (k, x) => (typeof x === 'bigint' ? x.toString() : x));
@@ -13,6 +25,7 @@ export class ApiCore {
     this.node = node;
     this.chain = node.chain;
     this.faucetLog = new Map();
+    this.eth = new EthRpc(node.chain);
   }
 
   // ---------------------------------------------------------------- views
@@ -24,7 +37,7 @@ export class ApiCore {
 
   _blockSummary(b) {
     const h = b.header;
-    return { height: h.height, hash: b.hash, timestamp: h.timestamp, generator: h.generator, mode: h.mode, activeMiner: h.activeMiner, txCount: h.txCount, reward: h.reward, fees: h.fees, btcAnchor: h.btcAnchor, btcHeaders: b.btcHeaders.length };
+    return { height: h.height, hash: b.hash, timestamp: h.timestamp, generator: h.generator, mode: h.mode, activeMiner: h.activeMiner, txCount: h.txCount, reward: h.reward, fees: h.fees, gasUsed: h.gasUsed, btcAnchor: h.btcAnchor, btcHeaders: b.btcHeaders.length };
   }
 
   status() {
@@ -34,6 +47,9 @@ export class ApiCore {
     return {
       node: this.node.name,
       chainId: s.chainId,
+      network: s.network,
+      execution: { vm: 'EVM', hardfork: 'shanghai', gasToken: 'FDK', baseFeePerGas: s.params.minGasPrice, rpc: '/rpc' },
+      contracts: s.contracts,
       genesisHash: this.chain.genesisHash,
       height: s.height,
       tipHash: s.tipHash,
@@ -45,8 +61,9 @@ export class ApiCore {
       fallbackValidator: s.fallbackValidator,
       supply: s.supply,
       fdkCirculating: s.supply.fdkMinted - s.supply.fdkBurned - s.piggyBank,
+      fdkCap: s.fdkCap,
       piggyBank: s.piggyBank,
-      yearlyEmission: yearlyEmission(s),
+      yearlyEmission: s.yearlyEmission,
       counters: s.counters,
       pog: s.pog,
       schedule: { ...sched, currentLeader: leaderFor(sched, nowSlot), nextLeader: leaderFor(sched, nowSlot + 1) },
@@ -82,7 +99,7 @@ export class ApiCore {
     const dedications = Object.values(G.dedications).filter((d) => d.holder === addr).map((d) => this.dedicationView(d.id));
     if (dedications.length) roles.push('garden-member');
     const pending = [...this.chain.mempool.values()].filter((t) => t.from === addr).map((t) => ({ hash: t.hash, type: t.type, nonce: t.nonce }));
-    return { address: addr, fdk: a.fdk, stable: a.stable, nonce: a.nonce, nextNonce: this.chain.nextNonce(addr), credits, roles, miners, generator: s.generators[addr] || null, listings: Object.values(s.listings).filter((l) => l.seller === addr), dedications, history, pending };
+    return { address: addr, fdk: a.fdk, stable: a.stable, nonce: a.nonce, nextNonce: this.chain.nextNonce(addr), allowances: a.allowances || {}, credits, roles, miners, generator: s.generators[addr] || null, listings: Object.values(s.listings).filter((l) => l.seller === addr), dedications, history, pending };
   }
 
   // ------------------------------------------------- Legacy Garden views
@@ -144,7 +161,8 @@ export class ApiCore {
     const idx = this.chain.txIndex.get(hash);
     if (idx) {
       const b = this.chain.blocks[idx.height - 1];
-      return { status: 'confirmed', height: idx.height, blockHash: b.hash, timestamp: b.header.timestamp, confirmations: this.chain.height - idx.height + 1, tx: b.txs[idx.index], events: idx.receipt.events };
+      const r = idx.receipt;
+      return { status: r.status === 'ok' ? 'confirmed' : 'failed', error: r.error, height: idx.height, blockHash: b.hash, timestamp: b.header.timestamp, confirmations: this.chain.height - idx.height + 1, tx: b.txs[idx.index], events: r.events, gasUsed: r.gasUsed, fee: r.fee, logs: r.logs, contractAddress: r.contractAddress };
     }
     if (this.chain.mempool.has(hash)) return { status: 'pending', tx: this.chain.mempool.get(hash) };
     if (this.chain.rejected.has(hash)) return { status: 'rejected', hash, error: this.chain.rejected.get(hash) };
@@ -161,9 +179,8 @@ export class ApiCore {
       const parts = p.split('/').slice(2);
       const [r, id] = parts;
       if (method === 'POST' && r === 'tx') {
-        const tx = body;
         try {
-          return R(200, this.chain.addTx(tx));
+          return R(200, await this.chain.addTx(body));
         } catch (e) {
           return R(400, { error: e.message });
         }
@@ -243,6 +260,8 @@ export class ApiCore {
           return R(200, Object.values(s.miners));
         case 'generators':
           return R(200, Object.values(s.generators));
+        case 'contracts':
+          return R(200, Object.entries(s.contracts).map(([name, address]) => ({ name, address, ...(url.searchParams.get('abi') ? { abi: ARTIFACTS[name]?.abi } : {}) })));
         case 'auditors':
           return R(200, Object.entries(s.auditors).map(([address, a]) => ({ address, ...a })));
         case 'btc': {
@@ -314,13 +333,14 @@ export class ApiCore {
     const s = this.chain.state;
     const methods = {
       fdk_chainId: () => s.chainId,
+      fdk_network: () => s.network,
       fdk_blockNumber: () => s.height,
       fdk_getBlockByNumber: ([n]) => this.chain.getBlock(n === 'latest' ? s.height : n),
       fdk_getBlockByHash: ([h]) => this.chain.getBlock(h),
       fdk_getTransaction: ([h]) => this.txView(h),
-      fdk_sendRawTransaction: ([tx]) => this.chain.addTx(tx),
+      fdk_sendRawTransaction: ([raw]) => this.chain.addTx(raw),
       fdk_getAccount: ([a]) => this.accountView(a),
-      fdk_getBalance: ([a]) => { const x = peekAccount(s, a); return { FDK: x.fdk, STABLE: x.stable }; },
+      fdk_getBalance: ([a]) => { const x = peekAccount(s, String(a).toLowerCase()); return { FDK: x.fdk, STABLE: x.stable }; },
       fdk_getNonce: ([a]) => this.chain.nextNonce(a),
       fdk_status: () => this.status(),
       pog_getSchedule: () => this.status().schedule,
@@ -334,6 +354,7 @@ export class ApiCore {
       garden_getTree: ([id]) => this.treeView(id),
       garden_getDedication: ([id]) => this.dedicationView(id),
     };
+    if (!methods[method] && this.eth.has(method)) return this.eth.call(method, params);
     if (!methods[method]) {
       const e = new Error(`method ${method} not found`);
       e.code = -32601;

@@ -1,25 +1,29 @@
 // In-browser Fedrok network for the hosted demo.
 //
-// Runs the real protocol code (src/core) and the real API layer
-// (src/node/api-core.js) inside the page: a simulated Bitcoin network, a
-// validating Fedrok node with three block-generator identities, the faucet
-// and the demo scenario. The web app talks to it through the same /api and
-// /rpc routes it uses against a server node; only the transport differs.
+// Runs the real node code inside the page: the EVM with the Fedrok system
+// contracts (src/evm), Proof of Green block production, the API layer
+// (src/node/api-core.js, including Ethereum JSON-RPC), a simulated Bitcoin
+// network, three block-generator identities, the faucet and the demo
+// scenario. The web app talks to it through the same /api and /rpc routes it
+// uses against a server node; only the transport differs.
 import { generatePrivateKey, addressFromPrivate, publicKeyOf, btcSimAddressOf, sha256Hex, canonical } from '../../src/core/crypto.js';
-import { btcHeaderHash, meetsDifficulty, MAX_BTC_HEADERS_PER_BLOCK } from '../../src/core/consensus.js';
-import { signTx } from '../../src/core/transaction.js';
-import { fdk, stable } from '../../src/core/units.js';
+import { btcHeaderHash, meetsDifficulty, MAX_BTC_HEADERS_PER_BLOCK } from '../../src/core/btc.js';
 import { buildDevnetGenesis } from '../../src/core/genesis.js';
 import { runDemoScenario } from '../../src/core/demo-scenario.js';
 import { runGardenScenario } from '../../src/core/garden-scenario.js';
 import { FedrokClient } from '../../src/core/client.js';
 import { Emitter } from '../../src/core/emitter.js';
-import { Chain } from '../../src/node/chain.js';
+import { Chain, stripBlock } from '../../src/evm/chain.js';
+import { faucetSend } from '../../src/evm/faucet.js';
 import { ApiCore, toJSON } from '../../src/node/api-core.js';
 import { MINER_PROFILES } from '../../src/btc/profiles.js';
 
-const STORE = 'fedrok.inbrowser.v1';
-const BTC_BLOCK_MS = 4000;
+const STORE = 'fedrok.inbrowser.evm.v1';
+const BTC_BLOCK_MS = 10_000;
+const HEARTBEAT_MS = 30_000;
+// Replaying a long saved chain on page load gets slow: past this many blocks
+// the demo starts a fresh network (and seeds it again) instead.
+const MAX_SAVED_BLOCKS = 4000;
 const ROLES = ['governance', 'auditor', 'stable-issuer', 'faucet', 'generator-1', 'generator-2', 'generator-3', 'demo-buyer', 'developer-png', 'developer-kenya', 'developer-peru', 'miner-aurora', 'miner-andes', 'miner-highlands'];
 const GARDEN_ROLES = ['garden-operator', 'garden-steward', 'member-mensah', 'member-owusu', 'member-clarke', 'member-diaspora'];
 
@@ -107,7 +111,7 @@ class LocalStorageBlocks {
 
 export async function startLocalNetwork() {
   let data = store.get();
-  if (!data || !data.genesis) data = freshNetwork();
+  if (!data || !data.genesis || (data.blocks || []).length > MAX_SAVED_BLOCKS) data = freshNetwork();
   // Networks saved before the Legacy Garden existed: add its identities.
   for (const r of GARDEN_ROLES) if (!data.keys[r]) data.keys[r] = generatePrivateKey();
   const events = new Emitter();
@@ -128,14 +132,7 @@ export async function startLocalNetwork() {
       return btc.miners;
     },
     async faucetSend(to) {
-      const from = addressFromPrivate(this.faucetKey);
-      const fee = chain.state.params.minFee.toString();
-      const base = chain.nextNonce(from);
-      const g = data.genesis.faucet;
-      return [
-        signTx({ chainId: chain.state.chainId, type: 'transfer', nonce: base, fee, payload: { to, asset: 'FDK', amount: fdk(g.fdk).toString() } }, this.faucetKey),
-        signTx({ chainId: chain.state.chainId, type: 'transfer', nonce: base + 1, fee, payload: { to, asset: 'STABLE', amount: stable(g.stable).toString() } }, this.faucetKey),
-      ].map((t) => chain.addTx(t).hash);
+      return faucetSend(chain, this.faucetKey, to, data.genesis.faucet);
     },
   };
   const api = new ApiCore({ node });
@@ -144,7 +141,7 @@ export async function startLocalNetwork() {
   let saveTimer = null;
   const save = () => {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => store.set({ ...data, btc: { miners: btc.miners, headers: btc.headers }, blocks: chain.blocks }), 500);
+    saveTimer = setTimeout(() => store.set({ ...data, btc: { miners: btc.miners, headers: btc.headers }, blocks: chain.blocks.map(stripBlock) }), 500);
   };
   chain.on('block', (b) => {
     if (b) events.emit('message', { type: 'block', block: api._blockSummary(b) });
@@ -158,21 +155,28 @@ export async function startLocalNetwork() {
   setInterval(() => btc.produce(), BTC_BLOCK_MS);
 
   // Block production: try each generator identity for the current slot.
+  // Blocks are produced when there are transactions or Bitcoin headers to
+  // record, and otherwise as a heartbeat.
   let lastSlot = -1;
-  setInterval(() => {
+  let producing = false;
+  setInterval(async () => {
     const now = Date.now();
     const bt = chain.state.params.blockTimeMs;
     const slot = Math.floor(now / bt);
-    if (slot === lastSlot) return;
+    if (slot === lastSlot || producing) return;
     lastSlot = slot;
     const anchor = chain.state.pog.anchorHeight;
     const headers = btc.range(anchor, Math.min(btc.tip.height, anchor + MAX_BTC_HEADERS_PER_BLOCK));
-    for (const k of genKeys) {
-      try {
-        if (chain.produce({ timestamp: now, btcHeaders: headers, privKey: k })) break;
-      } catch (e) {
-        log.warn('block production failed', e.message);
+    if (!chain.mempool.size && !headers.length && now - chain.state.lastTimestamp < HEARTBEAT_MS) return;
+    producing = true;
+    try {
+      for (const k of genKeys) {
+        if (await chain.produce({ timestamp: now, btcHeaders: headers, privKey: k })) break;
       }
+    } catch (e) {
+      log.warn('block production failed', e.message);
+    } finally {
+      producing = false;
     }
   }, 150);
 
@@ -189,7 +193,7 @@ export async function startLocalNetwork() {
         return new Response(toJSON({ error: 'invalid JSON' }), { status: 400 });
       }
       try {
-        const r = await api.handle(method, url, body);
+        const r = await api.handle(method, url, JSON.parse(JSON.stringify(body)));
         if (!r) return new Response(toJSON({ error: 'not found' }), { status: 404 });
         return new Response(r.code === 204 ? null : toJSON(r.body), { status: r.code, headers: { 'content-type': 'application/json' } });
       } catch (e) {

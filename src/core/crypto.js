@@ -1,10 +1,12 @@
 // Cryptographic primitives shared by the node, the SDK and the browser wallet.
 // Keys are secp256k1 and addresses are derived exactly like Ethereum
-// (last 20 bytes of keccak256 of the uncompressed public key), so keys are
-// portable to EVM tooling when the EVM execution layer is added.
+// (last 20 bytes of keccak256 of the uncompressed public key): the same key
+// signs Fedrok EVM transactions and works in MetaMask or any EVM wallet.
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
+import { ripemd160 } from '@noble/hashes/legacy.js';
+import { AbiCoder, keccak256 } from 'ethers';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 export { bytesToHex, hexToBytes, utf8ToBytes };
@@ -73,13 +75,30 @@ export function verifyDigest(sigHex, digestHex, pubHex) {
   }
 }
 
-/** Simulated Bitcoin address derived from a secp256k1 key (devnet only). */
-export function btcSimAddressOf(pubHex) {
-  return 'bcsim1' + bytesToHex(sha256(fromHex(pubHex))).slice(0, 38);
+/** Sign a 32-byte digest with a recoverable signature: 0x r(32) s(32) v(1, 27/28). */
+export function signRecoverable(digestHex, privHex) {
+  const sig = secp256k1.sign(fromHex(digestHex), fromHex(privHex), { prehash: false, format: 'recovered' });
+  return toHex(sig.slice(1, 65)) + (27 + sig[0]).toString(16);
 }
 
-export function btcLinkMessage(btcAddress, fedrokAddress, chainId) {
-  return keccakHex(`Fedrok green miner link|${chainId}|${btcAddress}|${fedrokAddress}`);
+/**
+ * Devnet Bitcoin address of a key: "bcsim1" + hex(hash160(compressed key)).
+ * hash160 = RIPEMD-160(SHA-256(key)), as for Bitcoin P2PKH. The Proof of Green
+ * contract derives the same address on-chain from the public key.
+ */
+export function btcSimAddressOf(pubHex) {
+  const pub = fromHex(pubHex);
+  const compressed = pub.length === 33 ? pub : secp256k1.Point.fromBytes(pub).toBytes(true);
+  return 'bcsim1' + bytesToHex(ripemd160(sha256(compressed)));
+}
+
+/**
+ * Digest a Bitcoin miner signs to link its Bitcoin address to a Fedrok owner
+ * account (checked on-chain with ecrecover by ProofOfGreen.accredit).
+ */
+export function btcLinkMessage(btcAddress, owner, chainId, pogAddress) {
+  const h160 = '0x' + btcAddress.replace(/^bcsim1/, '');
+  return keccak256(AbiCoder.defaultAbiCoder().encode(['string', 'uint256', 'address', 'bytes20', 'address'], ['Fedrok green miner link', chainId, pogAddress, h160, owner]));
 }
 
 export function merkleRoot(hashes) {
