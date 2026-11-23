@@ -109,9 +109,12 @@ class LocalStorageBlocks {
   rewrite() {}
 }
 
-export async function startLocalNetwork() {
+// snapshot: a network already seeded with the demo data at build time
+// (scripts/build-artifact.js), so a first visit opens on a working network
+// instead of waiting for the setup to run in the page.
+export async function startLocalNetwork({ snapshot = null } = {}) {
   let data = store.get();
-  if (!data || !data.genesis || (data.blocks || []).length > MAX_SAVED_BLOCKS) data = freshNetwork();
+  if (!data || !data.genesis || (data.blocks || []).length > MAX_SAVED_BLOCKS) data = snapshot ? JSON.parse(JSON.stringify(snapshot)) : freshNetwork();
   // Networks saved before the Legacy Garden existed: add its identities.
   for (const r of GARDEN_ROLES) if (!data.keys[r]) data.keys[r] = generatePrivateKey();
   const events = new Emitter();
@@ -139,9 +142,10 @@ export async function startLocalNetwork() {
 
   // Persist (debounced): blocks + Bitcoin headers, so a reload continues the same chain.
   let saveTimer = null;
+  const snapshotNow = () => ({ ...data, btc: { miners: btc.miners, headers: btc.headers }, blocks: chain.blocks.map(stripBlock) });
   const save = () => {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => store.set({ ...data, btc: { miners: btc.miners, headers: btc.headers }, blocks: chain.blocks.map(stripBlock) }), 500);
+    saveTimer = setTimeout(() => store.set(snapshotNow()), 500);
   };
   chain.on('block', (b) => {
     if (b) events.emit('message', { type: 'block', block: api._blockSummary(b) });
@@ -205,6 +209,7 @@ export async function startLocalNetwork() {
 
   const local = {
     seed: { running: false, done: data.seeded, lines: [] },
+    snapshot: snapshotNow,
     subscribe(cb) {
       events.on('message', cb);
     },
