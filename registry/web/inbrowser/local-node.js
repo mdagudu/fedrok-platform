@@ -16,7 +16,7 @@ import { Chain, stripBlock } from '../../src/evm/chain.js';
 import { faucetSend } from '../../src/evm/faucet.js';
 import { ApiCore, toJSON } from '../../src/node/api-core.js';
 
-const STORE = 'fedrok.registry.inbrowser.v1';
+const STORE = 'fedrok.registry.inbrowser.v2';
 const HEARTBEAT_MS = 30_000;
 // Replaying a long saved chain on page load gets slow: past this many blocks
 // the demo starts a fresh network (and seeds it again) instead.
@@ -170,7 +170,7 @@ export async function startLocalNetwork({ snapshot = null } = {}) {
     reset() {
       store.clear();
       try {
-        localStorage.removeItem('fedrok.registry.wallets.v1');
+        localStorage.removeItem('fedrok.registry.accounts.v2');
       } catch {}
       location.hash = '';
       location.reload();

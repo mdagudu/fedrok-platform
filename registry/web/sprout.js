@@ -209,7 +209,7 @@ export function createSprout({ api, sendTx, render, toast, esc, status }) {
       ls.innerHTML = `🔒 ${project.status === 'locked' ? 'Locked & submitted' : 'Retired'}: read-only`;
       input.placeholder = `Ask ${AGENT_NAME} about this project (it can no longer be changed)`;
     } else if (!canEdit()) {
-      ls.textContent = wallet ? 'Read-only: you are not the owner' : 'Read-only: connect the owner wallet to edit';
+      ls.textContent = wallet ? 'Read-only: you are not the owner' : 'Read-only: sign in as the owner to edit';
       input.placeholder = `Ask ${AGENT_NAME} about this project…`;
     } else {
       ls.textContent = `Editing enabled · ${completeness(project)}% complete`;
@@ -275,7 +275,7 @@ export function createSprout({ api, sendTx, render, toast, esc, status }) {
     const p = await fresh();
     // Checked here for a clear message; the ProjectRegistry contract enforces it regardless.
     if (p.status !== 'draft') throw new Error(`the project is ${p.status === 'locked' ? 'locked & submitted' : 'retired'} and can no longer be changed by anyone`);
-    if (!wallet || wallet.address !== p.owner) throw new Error('only the project owner can change it, and the owner wallet is not connected');
+    if (!wallet || wallet.address !== p.owner) throw new Error('only the project owner can change it, and the owner is not signed in');
     const details = { ...p.details };
     for (const [k, v] of Object.entries(changes.details || {})) {
       if (!DETAIL_FIELDS.find((f) => f.key === k)) continue;
@@ -390,7 +390,7 @@ export function createSprout({ api, sendTx, render, toast, esc, status }) {
   }
   async function guidedTurn(chat, text) {
     if (!canEdit()) {
-      say(project.status !== 'draft' ? `This project is ${project.status === 'locked' ? 'locked & submitted' : 'retired'}, so it can no longer be changed. Connect Claude (gear icon) if you want to ask questions about it.` : 'Only the project owner can change this project. Connect the owner wallet first.');
+      say(project.status !== 'draft' ? `This project is ${project.status === 'locked' ? 'locked & submitted' : 'retired'}, so it can no longer be changed. Connect Claude (gear icon) if you want to ask questions about it.` : 'Only the project owner can change this project. Sign in as the owner first.');
       return;
     }
     const m = text.match(/^change\s+([\w ]+?)\s*:\s*([\s\S]+)$/i);

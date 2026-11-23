@@ -104,3 +104,11 @@ test('governance can add project types', async () => {
   assert.ok(c.validator.state.projectTypes.includes('Seagrass restoration'));
   await c.do('alice', 'project_create', { ...base, projectType: 'Seagrass restoration' });
 });
+
+test('profiles: an account names itself; project views show the owner', async () => {
+  const c = await setup(['alice', 'bob']);
+  await rejects(c.send('alice', 'profile_set', { name: 'A', organisation: '' }), /2-80/);
+  await c.do('alice', 'profile_set', { name: 'Alice Moyo', organisation: 'Green Valley Trust' });
+  assert.deepEqual({ ...c.validator.state.profiles[c.A.alice], updatedAt: 0 }, { name: 'Alice Moyo', organisation: 'Green Valley Trust', updatedAt: 0 });
+  assert.equal(c.validator.state.profiles[c.A.bob], undefined);
+});

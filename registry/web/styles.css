@@ -304,3 +304,12 @@ details.card[open] > summary::before { content: '−'; }
 body.sprout-docked .pgrid2 { grid-template-columns: minmax(0, 1fr); }
 body.sprout-docked .toast-host { right: auto; left: calc(var(--side) + 20px); }
 @media (max-width: 860px) { body.sprout-docked .toast-host { left: 16px; right: 16px; bottom: auto; top: 70px; } }
+
+/* sign-in and account */
+.signin .card h2 { margin-bottom: 14px; }
+.pcard-owner { color: var(--green); margin-top: 2px; }
+.modal.busy { display: flex; gap: 16px; align-items: center; max-width: 420px; }
+.spinner { width: 26px; height: 26px; flex: none; border-radius: 50%; border: 3px solid var(--line, #ddd); border-top-color: var(--cinnabar); animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+details > summary { cursor: pointer; }

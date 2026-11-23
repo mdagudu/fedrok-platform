@@ -48,7 +48,7 @@ const NAV = [
   ['/new', 'Register a project', 'plus'],
   ['/projects', 'Project registry', 'folder'],
   ['/explorer', 'Explorer', 'cube'],
-  ['/wallet', 'Wallet', 'wallet'],
+  ['/wallet', 'My account', 'wallet'],
   ['/garden', 'Legacy Garden', 'tree'],
   ['/member', 'My trees', 'heart'],
   ['/console', 'Console', 'shield'],
@@ -86,7 +86,7 @@ const date = (ts) => new Date(ts).toLocaleString('en-GB', { dateStyle: 'medium',
 const day = (ts) => new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 const TX_LABEL = {
   transfer: 'Transfer', fdk_burn: 'FDK burn', stable_mint: 'Stablecoin mint', stable_burn: 'Stablecoin redemption',
-  project_create: 'Project created', project_update: 'Project edited', project_lock: 'Locked & submitted', project_retire: 'Project retired',
+  profile_set: 'Profile updated', project_create: 'Project created', project_update: 'Project edited', project_lock: 'Locked & submitted', project_retire: 'Project retired',
   gov_add_project_type: 'Project type added', gov_add_validator: 'Validator added', gov_remove_validator: 'Validator removed', gov_set_param: 'Parameter change', gov_set_stable_issuer: 'Stablecoin issuer set',
   garden_register: 'Garden registered', garden_steward: 'Garden steward', dedication_create: 'Tree dedication', planting_window_close: 'Planting window closed',
   tree_plant: 'Tree planted', tree_monitor: 'Tree inspection', tree_replace: 'Tree replaced', maintenance_renew: 'Maintenance renewal',
@@ -112,7 +112,7 @@ function toast(html, kind = '', ms = 6000) {
 }
 
 // ----------------------------------------------------------------- wallet
-const WKEY = 'fedrok.registry.wallets.v1';
+const WKEY = 'fedrok.registry.accounts.v2';
 const Wallet = {
   mem: null,
   list() {
@@ -128,10 +128,12 @@ const Wallet = {
       localStorage.setItem(WKEY, JSON.stringify(w));
     } catch {}
   },
-  add(name, privKey) {
+  add(name, privKey, meta = {}) {
     const w = this.list();
     const address = addressFromPrivate(privKey);
-    if (!w.items.find((i) => i.address === address)) w.items.push({ name, privKey, address });
+    const item = w.items.find((i) => i.address === address);
+    if (item) Object.assign(item, meta);
+    else w.items.push({ name, privKey, address, ...meta });
     w.active = address;
     this.save(w);
     return address;
@@ -139,6 +141,14 @@ const Wallet = {
   active() {
     const w = this.list();
     return w.items.find((i) => i.address === w.active) || null;
+  },
+  signOut() {
+    const w = this.list();
+    w.active = null;
+    this.save(w);
+  },
+  byEmail(email) {
+    return this.list().items.find((i) => i.email && i.email === email) || null;
   },
   select(address) {
     const w = this.list();
@@ -156,8 +166,8 @@ const Wallet = {
 async function submit(type, payload, label) {
   const w = Wallet.active();
   if (!w) {
-    toast('Create or import a wallet first.', 'err');
-    go('/wallet');
+    toast('Sign in first.', 'err');
+    askSignIn();
     return null;
   }
   try {
@@ -178,10 +188,14 @@ function formData(form) {
 }
 
 // -------------------------------------------------------------- overview
+/** Readable owner: the on-chain profile (organisation, else name), else a short address. */
+const ownerText = (prof, addr) => (prof ? esc(prof.organisation || prof.name) : short(addr, 6));
+const ownerFull = (prof, addr) => (prof ? `<b>${esc(prof.name)}</b>${prof.organisation ? `<div class="small">${esc(prof.organisation)}</div>` : ''}<div class="small">${addrLink(addr)}</div>` : addrLink(addr));
 const projectCard = (p) => `<a class="pcard" href="#/project/${p.id}">
   <div class="pcard-top">${kindPill(p.kind)} ${statusPill(p.status)}</div>
   <h3>${esc(p.name)}</h3>
   <div class="small muted">${esc(p.projectType)}${p.country ? ` · ${esc(p.country)}` : ''}</div>
+  <div class="small pcard-owner">by ${ownerText(p.ownerProfile, p.owner)}</div>
   ${p.summary ? `<p class="small">${esc(p.summary.length > 170 ? p.summary.slice(0, 167) + '…' : p.summary)}</p>` : '<p class="small muted">No summary yet.</p>'}
   <div class="pcard-foot small muted"><span class="mono">${p.id}</span><span>${p.status === 'locked' ? `locked ${day(p.lockedAt)}` : p.status === 'retired' ? `retired ${day(p.retiredAt)}` : `updated ${ago(p.updatedAt)}`}</span></div>
 </a>`;
@@ -192,7 +206,7 @@ async function viewOverview() {
   const ps = s.projectStats;
   const seed = LOCAL?.seed;
   const banner = LOCAL
-    ? `<div class="note no-print" style="margin-bottom:18px"><b>Hosted demo.</b> This page runs a complete Fedrok registry network in your browser: three authority validators, the EVM with the registry contracts, and the same API code as a server node. Your data stays in this browser. ${seed.running ? `<br><b>Setting up demo data…</b> ${esc(seed.lines.filter((l) => l.startsWith('✓') || l.startsWith('▸')).slice(-1)[0] || 'starting')}` : ''}<div class="actions" style="margin-top:10px"><a class="btn sm" href="#/new">Register a project</a><a class="btn ghost sm" href="#/wallet">Pick a demo identity</a><button class="btn ghost sm" id="reset-net">Reset network</button></div></div>`
+    ? `<div class="note no-print" style="margin-bottom:18px"><b>Hosted demo.</b> This page runs a complete Fedrok registry network in your browser: three authority validators, the EVM with the registry contracts, and the same API code as a server node. Your data stays in this browser. ${seed.running ? `<br><b>Setting up demo data…</b> ${esc(seed.lines.filter((l) => l.startsWith('✓') || l.startsWith('▸')).slice(-1)[0] || 'starting')}` : ''}<div class="actions" style="margin-top:10px"><a class="btn sm" href="#/new">Register a project</a>${Wallet.active() ? '' : '<a class="btn ghost sm" href="#/wallet">Sign in</a>'}<button class="btn ghost sm" id="reset-net">Reset network</button></div></div>`
     : '';
   return `${banner}
   <section class="hero">
@@ -256,6 +270,7 @@ async function viewBlock(id) {
 function describeEvent(ev) {
   const sym = SYM();
   switch (ev.event) {
+    case 'ProfileSet': return `Profile of ${addrLink(ev.account)} set to ${esc(ev.name)}${ev.organisation ? ' · ' + esc(ev.organisation) : ''}`;
     case 'Transfer': return `${ev.asset === 'FDK' ? F(ev.amount, 4) + ' FDK' : S(ev.amount) + ' ' + sym} from ${addrLink(ev.from)} to ${addrLink(ev.to)}`;
     case 'StableMinted': return `${S(ev.amount)} ${sym} minted to ${addrLink(ev.to)} · reserve: ${esc(ev.reserveRef)}`;
     case 'StableRedeemed': return `${S(ev.amount)} ${sym} redeemed`;
@@ -321,90 +336,205 @@ async function viewAddress(addr) {
   </div>`;
 }
 
-// ---------------------------------------------------------------- wallet
+// --------------------------------------------------------------- account
+// Sign in like on the live platform: with email (Fedrok creates an account
+// key for you in this browser), or with a browser wallet such as MetaMask
+// (one signature message derives your Fedrok key; no funds move). The
+// account's name and organisation are an on-chain profile, shown on its
+// project pages.
+const NEXT_KEY = 'fedrok.registry.next';
+function askSignIn() {
+  try { sessionStorage.setItem(NEXT_KEY, location.hash); } catch {}
+  go('/wallet');
+}
+const signInNote = (why) => `<div class="note">${why} <button class="btn sm" type="button" data-signin>Sign in</button></div>`;
+
+function busy(text) {
+  const el = document.createElement('div');
+  el.className = 'modal-back';
+  el.innerHTML = `<div class="modal card busy" role="status" aria-live="polite"><span class="spinner"></span><div><b>Setting up your account</b><div class="small muted" data-step>${esc(text)}</div></div></div>`;
+  document.body.appendChild(el);
+  return { step: (t) => { el.querySelector('[data-step]').textContent = t; }, close: () => el.remove() };
+}
+
+async function finishSignIn(privKey, profile, meta = {}) {
+  const address = Wallet.add(profile.name, privKey, meta);
+  const b = busy('Creating your Fedrok account…');
+  try {
+    let acct = await api.account(address);
+    if (STATUS.faucet && BigInt(acct.fdk) < fdk('0.05')) {
+      b.step('Adding a little FDK for network fees…');
+      await api.post('/api/faucet', { address });
+      for (let i = 0; i < 40 && BigInt(acct.fdk) < fdk('0.05'); i++) {
+        await new Promise((r) => setTimeout(r, 750));
+        acct = await api.account(address);
+      }
+    }
+    const org = String(profile.organisation || '').trim();
+    if (!acct.profile || acct.profile.name !== profile.name || acct.profile.organisation !== org) {
+      b.step('Saving your profile to the ledger…');
+      await sendTx('profile_set', { name: profile.name, organisation: org });
+    }
+    toast(`Welcome, ${esc(profile.name)}. You are signed in.`, 'ok');
+  } catch (e) {
+    toast(`You are signed in, but setup did not finish: ${esc(e.message)}`, 'err', 9000);
+  } finally {
+    b.close();
+  }
+  let next = null;
+  try { next = sessionStorage.getItem(NEXT_KEY); sessionStorage.removeItem(NEXT_KEY); } catch {}
+  if (next && next !== location.hash) location.hash = next;
+  else render();
+}
+
+const utf8Hex = (t) => '0x' + [...new TextEncoder().encode(t)].map((b) => b.toString(16).padStart(2, '0')).join('');
+async function signInWithBrowserWallet() {
+  const eth = window.ethereum;
+  if (!eth) return toast('No browser wallet found. Install MetaMask, or continue with email.', 'err');
+  try {
+    const [account] = await eth.request({ method: 'eth_requestAccounts' });
+    const msg = `Sign in to Fedrok Registry\n\nThis signature creates your Fedrok registry key on ${STATUS.network}. It does not move any funds and costs no gas.\n\nWallet: ${account.toLowerCase()}`;
+    const sig = await eth.request({ method: 'personal_sign', params: [utf8Hex(msg), account] });
+    const key = '0x' + sha256Hex(String(sig).toLowerCase());
+    const address = addressFromPrivate(key);
+    const acct = await api.account(address);
+    if (acct.profile) return finishSignIn(key, acct.profile, { via: 'wallet', linked: account.toLowerCase() });
+    modal(`<h2>Your profile</h2><p class="small">Wallet ${short(account.toLowerCase(), 6)} is connected. Add the name people will see on your project pages.</p>
+      <label>Your name<input name="name" minlength="2" maxlength="80" required autocomplete="name"></label>
+      <label>Organisation <span class="hint">optional</span><input name="organisation" maxlength="120" autocomplete="organization"></label>
+      <div class="actions"><button class="btn" type="submit" data-label="Continue">Continue</button><button class="btn ghost" data-close>Cancel</button></div>`,
+    (d) => { finishSignIn(key, { name: d.name.trim(), organisation: d.organisation.trim() }, { via: 'wallet', linked: account.toLowerCase() }); });
+  } catch (e) {
+    toast(`Wallet sign-in cancelled: ${esc(e.message || e)}`, 'err');
+  }
+}
+
 async function viewWallet() {
   const w = Wallet.list();
   const active = Wallet.active();
-  const acct = active ? await api.account(active.address) : null;
-  return `${head('Wallet', 'Your Fedrok wallet', 'Keys are generated and stored in this browser and transactions are signed locally. This devnet wallet is for testing: use a hardware or custodial wallet for real value.')}
-  ${LOCAL ? `<div class="card" style="margin-bottom:18px"><h2>Demo identities <span class="aside">one click to act as each participant</span></h2><div class="grid g3">${LOCAL.demoIdentities.map((d) => { const a = addressFromPrivate(d.key); return `<div class="feature" style="border:1px solid var(--line);padding:14px">${icon(a === active?.address ? 'check' : 'wallet', 'icon-outline')}<div><h3>${esc(d.name)}</h3><p>${esc(d.role)}</p><button class="btn sm ${a === active?.address ? 'ghost' : ''}" style="margin-top:10px" data-demo="${esc(d.name)}" ${a === active?.address ? 'disabled' : ''}>${a === active?.address ? 'Active' : 'Use this identity'}</button></div></div>`; }).join('')}</div></div>` : ''}
-  ${active ? `
-  <div class="grid g4">
-    ${kpi('FDK (utility token)', F(acct.fdk, 4), 'pays the network fee for each record', 'green')}
-    ${kpi(esc(SYM()) + ' (stablecoin)', S(acct.stable), 'used for payments')}
-    ${kpi('My projects', acct.projects.length, `${acct.projects.filter((p) => p.status === 'draft').length} draft · ${acct.projects.filter((p) => p.status === 'locked').length} locked`, 'green')}
-    ${kpi('Account', `<span class="mono" style="font-size:14px">${short(active.address, 8)}</span>`, `${esc(active.name)} · ${acct.roles.join(', ') || 'no roles'}`)}
-  </div>
-  <div class="actions section" style="margin-top:16px">
-    <a class="btn ghost sm" href="#/address/${active.address}">View on explorer</a>
-    <button class="btn ghost sm" id="copy-addr">Copy address</button>
-    ${STATUS.faucet ? '<button class="btn accent sm" id="faucet">Get devnet FDK and ' + esc(SYM()) + '</button>' : ''}
-  </div>
-  <div class="grid g2 section">
-    <div class="card"><h2>Send</h2>
-      <form class="stack" id="send">
-        <label>Recipient address<input name="to" placeholder="0x…" required></label>
-        <div class="row">
-          <label>Asset<select name="asset"><option value="STABLE">${esc(SYM())} (payment)</option><option value="FDK">FDK (utility)</option></select></label>
-          <label>Amount<input name="amount" inputmode="decimal" placeholder="0.00" required></label>
-        </div>
-        <div class="actions"><button class="btn">Sign and send</button><span class="small muted">Gas: ${F(BigInt(STATUS.params.minGasPrice) * 2n, 9)} FDK per gas at most</span></div>
-      </form>
-    </div>
+  if (!active) {
+    const hasWallet = typeof window.ethereum !== 'undefined';
+    const known = w.items.filter((i) => i.via === 'email' || i.via === 'wallet');
+    return `${head('My account', 'Sign in to Fedrok', 'Your projects belong to your Fedrok account. Only you can edit, lock & submit or retire them.')}
+    ${known.length ? `<div class="card" style="margin-bottom:18px"><h2>Welcome back</h2><div class="actions">${known.map((i) => `<button class="btn ghost" data-select="${i.address}">Continue as ${esc(i.name)}${i.email ? ` <span class="small muted">(${esc(i.email)})</span>` : ''}</button>`).join('')}</div></div>` : ''}
+    <div class="grid g2 signin">
+      <div class="card"><h2>Continue with email</h2>
+        <form class="stack" id="signin-email">
+          <label>Your name<input name="name" minlength="2" maxlength="80" required autocomplete="name" placeholder="e.g. Amara Osei"></label>
+          <label>Organisation <span class="hint">optional · shown on your project pages</span><input name="organisation" maxlength="120" autocomplete="organization" placeholder="e.g. Green Valley Trust"></label>
+          <label>Email<input name="email" type="email" required autocomplete="email" placeholder="you@example.org"></label>
+          <div class="actions"><button class="btn">Continue</button></div>
+        </form>
+        <p class="small muted" style="margin-bottom:0">No crypto wallet needed: Fedrok creates a secure account key for you in this browser and signs your records with it.${LOCAL ? ' In this demo no email is sent.' : ''}</p>
+      </div>
+      <div class="card"><h2>Use a crypto wallet</h2>
+        <p class="small" style="margin-top:0">Sign in with MetaMask or another browser wallet. You approve one signature message, which creates your Fedrok registry key. No funds move and it costs no gas. The same wallet gives you the same account on any device.</p>
+        <div class="actions"><button class="btn ${hasWallet ? '' : 'ghost'}" id="signin-wallet" type="button">${icon('wallet')} ${hasWallet ? 'Connect wallet' : 'Connect MetaMask'}</button></div>
+        ${hasWallet ? '' : '<p class="small muted">No browser wallet was found in this browser. Install MetaMask, or continue with email.</p>'}
+        <details style="margin-top:18px"><summary class="small">I have a Fedrok account key</summary>
+          <form class="stack" id="import" style="margin-top:12px"><label>Your name<input name="name" minlength="2" maxlength="80" required></label><label>Account key<input name="key" placeholder="0x… (64 hex characters)" required autocomplete="off"></label><div class="actions"><button class="btn ghost">Sign in with key</button></div></form>
+        </details>
+      </div>
+    </div>`;
+  }
+  const acct = await api.account(active.address);
+  const prof = acct.profile;
+  const via = active.via === 'email' ? `Signed in with ${esc(active.email)}` : active.via === 'wallet' ? `Signed in with wallet ${short(active.linked, 6)}` : 'Signed in with an account key';
+  return `${head('My account', esc(prof?.name || active.name), `${prof?.organisation ? esc(prof.organisation) + ' · ' : ''}${via}`, '<div class="actions"><button class="btn ghost sm" id="signout" type="button">Sign out</button></div>')}
+  <div class="grid g2">
     <div class="card"><h2>My projects <a class="aside" href="#/new">Register a project</a></h2>${table(['Project', 'Status'], acct.projects.map((p) => `<tr><td><a href="#/project/${p.id}">${esc(p.name)}</a><div class="small muted">${esc(p.projectType)} · <span class="mono">${p.id}</span></div></td><td>${statusPill(p.status)}</td></tr>`), 'You have no projects yet. <a href="#/new">Register or propose one</a>.')}</div>
+    <div class="card"><h2>Profile</h2>
+      <form class="stack" id="profile">
+        <label>Your name<input name="name" minlength="2" maxlength="80" required value="${esc(prof?.name || active.name)}"></label>
+        <label>Organisation <span class="hint">optional</span><input name="organisation" maxlength="120" value="${esc(prof?.organisation || '')}"></label>
+        <div class="actions"><button class="btn">Save profile</button></div>
+      </form>
+      <p class="small muted" style="margin-bottom:0">Your name and organisation are public: they are recorded on the ledger and shown on your project pages.${prof ? '' : ' <b>Not saved yet.</b>'}</p>
+    </div>
   </div>
-  <div class="grid g2 section">
-    <div class="card"><h2>Pending and recent activity</h2>${table(['Tx', 'Type', '#Status'], [...acct.pending.map((p) => `<tr><td>${txLink(p.hash)}</td><td>${txPill(p.type)}</td><td class="num"><span class="pill grad">pending</span></td></tr>`), ...acct.history.filter(Boolean).slice(0, 12).map((h) => `<tr><td>${txLink(h.tx.hash)}</td><td>${txPill(h.tx.type)}</td><td class="num">${blockLink(h.height)}</td></tr>`)], 'No activity yet.')}</div>
-    <div class="card"><h2>Use FDK</h2>
-      <p class="small" style="margin-top:0">FDK is a utility token: every record you write to the registry pays a tiny network fee in FDK. You can also burn FDK with a reason recorded on-chain.</p>
-      <form class="stack" id="burn"><div class="row"><label>FDK to burn<input name="amount" inputmode="decimal" required></label><label>Reason<input name="reason" placeholder="Manufacturing consumption" required></label></div><div class="actions"><button class="btn ghost">Burn FDK</button></div></form>
+  <details class="card section"><summary><h2 style="display:inline">Account details</h2> <span class="small muted">address, network fee balance, tokens and keys</span></summary>
+    <div class="grid g4" style="margin-top:16px">
+      ${kpi('Account address', `<span class="mono" style="font-size:14px">${short(active.address, 8)}</span>`, acct.roles.join(', ') || 'no roles')}
+      ${kpi('Network fee credit', F(acct.fdk, 4) + ' FDK', 'each record costs a tiny fee', 'green')}
+      ${kpi(esc(SYM()), S(acct.stable), 'settlement stablecoin')}
+      ${kpi('Records written', acct.nonce, 'transactions from this account')}
     </div>
-  </div>` : LOCAL ? `<div class="note plain">Pick a demo identity above to act as a project owner, governance or the Legacy Garden team. You can also create a fresh wallet and fund it from the faucet, then register your own project.</div>` : `<div class="note plain">You don't have a wallet in this browser yet. Create a new one, or import a private key (for the devnet demo, keys are in <code>devnet/keys/</code>, for example <code>developer-peru.key</code>).</div>`}
-  <div class="grid g2 section">
-    <div class="card"><h2>Wallets in this browser</h2>${table(['Name', 'Address', ''], w.items.map((i) => `<tr><td>${esc(i.name)} ${i.address === w.active ? '<span class="pill green">active</span>' : ''}</td><td>${addrLink(i.address)}</td><td class="num"><button class="btn ghost sm" data-select="${i.address}">Use</button> <button class="btn ghost sm" data-remove="${i.address}">Remove</button></td></tr>`), 'No wallets yet.')}</div>
-    <div class="card"><h2>Add a wallet</h2>
-      <form class="stack" id="create"><label>Name<input name="name" placeholder="e.g. Treasury" required></label><div class="actions"><button class="btn">Create new wallet</button></div></form>
-      <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
-      <form class="stack" id="import"><label>Name<input name="name" placeholder="e.g. Project owner" required></label><label>Private key<input name="key" placeholder="0x… (64 hex characters)" required autocomplete="off"></label><div class="actions"><button class="btn ghost">Import key</button></div></form>
+    <div class="actions" style="margin-top:16px">
+      <a class="btn ghost sm" href="#/address/${active.address}">View on explorer</a>
+      <button class="btn ghost sm" id="copy-addr" type="button">Copy address</button>
+      ${STATUS.faucet ? '<button class="btn ghost sm" id="faucet" type="button">Top up network fees (devnet)</button>' : ''}
     </div>
-  </div>`;
+    <div class="grid g2 section">
+      <div class="card"><h2>Send</h2>
+        <form class="stack" id="send">
+          <label>Recipient address<input name="to" placeholder="0x…" required></label>
+          <div class="row">
+            <label>Asset<select name="asset"><option value="STABLE">${esc(SYM())} (payment)</option><option value="FDK">FDK (utility)</option></select></label>
+            <label>Amount<input name="amount" inputmode="decimal" placeholder="0.00" required></label>
+          </div>
+          <div class="actions"><button class="btn ghost">Sign and send</button></div>
+        </form>
+      </div>
+      <div class="card"><h2>Recent activity</h2>${table(['Tx', 'Type', '#Status'], [...acct.pending.map((p) => `<tr><td>${txLink(p.hash)}</td><td>${txPill(p.type)}</td><td class="num"><span class="pill grad">pending</span></td></tr>`), ...acct.history.filter(Boolean).slice(0, 10).map((h) => `<tr><td>${txLink(h.tx.hash)}</td><td>${txPill(h.tx.type)}</td><td class="num">${blockLink(h.height)}</td></tr>`)], 'No activity yet.')}</div>
+    </div>
+    ${w.items.length > 1 ? `<div class="card section"><h2>Other accounts in this browser</h2>${table(['Name', 'Address', ''], w.items.filter((i) => i.address !== active.address).map((i) => `<tr><td>${esc(i.name)}${i.email ? `<div class="small muted">${esc(i.email)}</div>` : ''}</td><td>${addrLink(i.address)}</td><td class="num"><button class="btn ghost sm" data-select="${i.address}">Switch</button> <button class="btn ghost sm" data-remove="${i.address}">Forget</button></td></tr>`))}</div>` : ''}
+  </details>`;
 }
 
 function bindWallet() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener('submit', (e) => { e.preventDefault(); fn(formData(e.target), e.target); });
-  on('create', (d) => { Wallet.add(d.name, generatePrivateKey()); toast('Wallet created. Back up the key from your browser storage before using real value.', 'ok'); render(); });
+  on('signin-email', (d) => {
+    const email = d.email.trim().toLowerCase();
+    const known = Wallet.byEmail(email);
+    finishSignIn(known ? known.privKey : generatePrivateKey(), { name: d.name.trim(), organisation: d.organisation.trim() }, { via: 'email', email });
+  });
+  document.getElementById('signin-wallet')?.addEventListener('click', signInWithBrowserWallet);
   on('import', (d) => {
+    const k = d.key.trim().startsWith('0x') ? d.key.trim() : '0x' + d.key.trim();
+    if (!/^0x[0-9a-fA-F]{64}$/.test(k)) return toast('An account key is 64 hex characters.', 'err');
+    finishSignIn(k.toLowerCase(), { name: d.name.trim(), organisation: '' }, { via: 'key' });
+  });
+  on('profile', async (d, form) => {
+    const btn = form.querySelector('button');
+    btn.disabled = true;
     try {
-      const k = d.key.trim().startsWith('0x') ? d.key.trim() : '0x' + d.key.trim();
-      if (!/^0x[0-9a-fA-F]{64}$/.test(k)) throw new Error('expected 64 hex characters');
-      Wallet.add(d.name, k.toLowerCase());
-      toast('Wallet imported.', 'ok');
+      await sendTx('profile_set', { name: d.name.trim(), organisation: d.organisation.trim() });
+      toast('Profile saved to the ledger.', 'ok');
       render();
-    } catch (e) { toast('Import failed: ' + esc(e.message), 'err'); }
+    } catch (e) { toast(`Could not save: ${esc(e.message)}`, 'err', 9000); btn.disabled = false; }
   });
   on('send', (d) => {
     const amount = d.asset === 'FDK' ? fdk(d.amount) : stable(d.amount);
     if (!isAddress(d.to.trim().toLowerCase())) return toast('Recipient must be a 0x address.', 'err');
     submit('transfer', { to: d.to.trim().toLowerCase(), asset: d.asset, amount: amount.toString() }, `Send ${d.amount} ${d.asset === 'FDK' ? 'FDK' : SYM()}`);
   });
-  on('burn', (d) => submit('fdk_burn', { amount: fdk(d.amount).toString(), reason: d.reason }, `Burn ${d.amount} FDK`));
+  document.getElementById('signout')?.addEventListener('click', () => { Wallet.signOut(); toast('Signed out.'); render(); });
   document.getElementById('faucet')?.addEventListener('click', async () => {
     try {
       await api.post('/api/faucet', { address: Wallet.active().address });
-      toast('Faucet transfer submitted. Balances update in the next block.', 'ok');
+      toast('Top-up submitted. Your balance updates in the next block.', 'ok');
       setTimeout(render, 3500);
     } catch (e) { toast(esc(e.message), 'err'); }
   });
   document.getElementById('copy-addr')?.addEventListener('click', () => { Promise.resolve(navigator.clipboard?.writeText(Wallet.active().address)).then(() => toast('Address copied.'), () => toast('Copy failed. Address: ' + esc(Wallet.active().address))); });
-  document.querySelectorAll('[data-demo]').forEach((b) => b.addEventListener('click', () => {
-    const d = LOCAL.demoIdentities.find((x) => x.name === b.dataset.demo);
-    Wallet.add(d.name, d.key);
-    toast(`Now acting as ${esc(d.name)}.`, 'ok');
-    render();
-  }));
   document.querySelectorAll('[data-select]').forEach((b) => b.addEventListener('click', () => { Wallet.select(b.dataset.select); render(); }));
   document.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => { Wallet.remove(b.dataset.remove); render(); }));
 }
+
+// Role-only parts of the demo (governance console, Garden team pages) offer
+// a one-click operator sign-in on that page, so they stay usable.
+const demoRole = (name, label) => (LOCAL ? ` <button class="btn sm ghost" type="button" data-demo-role="${esc(name)}">${label}</button>` : '');
+document.addEventListener('click', (e) => {
+  const signin = e.target.closest?.('[data-signin]');
+  if (signin) { e.preventDefault(); askSignIn(); return; }
+  const b = e.target.closest?.('[data-demo-role]');
+  if (!b || !LOCAL) return;
+  const d = LOCAL.demoIdentities.find((x) => x.name === b.dataset.demoRole);
+  if (!d) return;
+  Wallet.add(d.name, d.key, { via: 'demo' });
+  toast(`Signed in as ${esc(d.name)} (demo operator).`, 'ok');
+  render();
+});
 
 // ------------------------------------------------------- project registry
 const sprout = createSprout({ api, sendTx, render: () => render(), toast, esc, status: () => STATUS, LOCAL });
@@ -417,7 +547,7 @@ let CURRENT_PROJECT = null;
 /** Sign and submit an action, wait for it, and throw with the node's reason on failure. */
 async function sendTx(type, payload) {
   const w = Wallet.active();
-  if (!w) throw new Error('connect a wallet first');
+  if (!w) throw new Error('sign in first');
   const { hash } = await api.send(w.privKey, type, payload);
   return api.wait(hash, 45_000);
 }
@@ -447,7 +577,7 @@ async function viewNewProject() {
   const acct = w ? await api.account(w.address) : null;
   const lowFdk = acct && BigInt(acct.fdk) < fdk('0.05');
   return `${head('Register a project', 'Register your project or propose a project', 'Put an environmental project on the Fedrok ledger. Choose what kind of project it is to begin with; Sprout, your AI project guide, then takes you to the new project page and helps you fill in the details.')}
-  ${!w ? `<div class="note">Connect a wallet first: the project will belong to that wallet, and only it can edit, lock or retire the project. <a href="#/wallet">Open the wallet</a>${LOCAL ? ' (pick a demo identity or create a new wallet and use the faucet)' : ''}.</div>` : lowFdk ? `<div class="note">Your wallet has almost no FDK for the network fee. ${s.faucet ? '<button class="btn sm accent" id="np-faucet" type="button">Get devnet FDK</button>' : 'Ask for FDK first.'}</div>` : ''}
+  ${!w ? signInNote('Sign in first: the project will belong to your account, and only you can edit, lock & submit or retire it.') : lowFdk ? `<div class="note">Your account has almost no FDK for network fees. ${s.faucet ? '<button class="btn sm accent" id="np-faucet" type="button">Top up network fees</button>' : 'Ask for FDK first.'}</div>` : ''}
   <form class="card newp" id="newp">
     <h2>1. What would you like to do?</h2>
     <div class="choice">
@@ -529,7 +659,7 @@ async function viewProject(id) {
     : p.status === 'retired'
       ? `<div class="note plain">${icon('lock', 'icon-outline')} <b>Retired on ${day(p.retiredAt)}</b>${p.retiredAfterLock ? ' after it was locked & submitted' : ''}: ${esc(p.retireReason)}. The record stays on the ledger, unchanged.</div>`
       : owner ? `<div class="note plain"><b>Draft.</b> You can keep changing this project, with Sprout or by hand, until you lock & submit it. ${p.pending.length ? `<br><span class="pill grad">${p.pending.length} change(s) waiting for the next block</span>` : ''}</div>` : '';
-  return `${head(`${p.kind === 'proposed' ? 'Proposed project' : 'Registered project'} · ${p.id}`, esc(p.name), `${esc(p.projectType)}${p.location || p.country ? ' · ' + esc([p.location, p.country].filter(Boolean).join(', ')) : ''}`, `<div class="actions">${statusPill(p.status)}${owner && draft ? `<button class="btn accent sm" id="open-sprout" type="button">${icon('spark')} Talk to Sprout</button>` : `<button class="btn ghost sm" id="open-sprout" type="button">${icon('spark')} Ask Sprout</button>`}</div>`)}
+  return `${head(`${p.kind === 'proposed' ? 'Proposed project' : 'Registered project'} · ${p.id}`, esc(p.name), `${esc(p.projectType)}${p.location || p.country ? ' · ' + esc([p.location, p.country].filter(Boolean).join(', ')) : ''}<br><span class="small">by ${ownerText(p.ownerProfile, p.owner)}${p.ownerProfile?.organisation ? ` · ${esc(p.ownerProfile.name)}` : ''}</span>`, `<div class="actions">${statusPill(p.status)}${owner && draft ? `<button class="btn accent sm" id="open-sprout" type="button">${icon('spark')} Talk to Sprout</button>` : `<button class="btn ghost sm" id="open-sprout" type="button">${icon('spark')} Ask Sprout</button>`}</div>`)}
   ${lockNote}
   <div class="pgrid2">
     <div class="stack-col">
@@ -559,7 +689,7 @@ async function viewProject(id) {
     <div class="stack-col">
       <div class="card"><h2>Ledger record</h2>
         <div class="kv">
-          <div>Owner</div><div>${addrLink(p.owner)}${owner ? ' <span class="pill green">you</span>' : ''}</div>
+          <div>Owner</div><div>${ownerFull(p.ownerProfile, p.owner)}${owner ? ' <span class="pill green">you</span>' : ''}</div>
           <div>Created</div><div>${date(p.createdAt)}</div>
           <div>Revision</div><div>${p.revision} edit(s) · updated ${ago(p.updatedAt)}</div>
           <div>Fingerprint</div><div class="mono small" title="${esc(p.contentHash)}">${short(p.contentHash, 12)}</div>
@@ -569,7 +699,7 @@ async function viewProject(id) {
           <button class="btn ghost" id="retire-btn" type="button">Retire project</button>
         </div>
         ${draft ? '<p class="small muted" style="margin-bottom:0">Lock & submit makes the record permanently read-only for everyone, Sprout included. Only retirement stays possible.</p>' : ''}` : ''}
-        ${!w ? `<p class="small muted">Connect the owner's wallet to edit this project.</p>` : ''}
+        ${!w ? `<p class="small muted">Owner? <a href="#/wallet" data-signin>Sign in</a> to edit this project.</p>` : ''}
       </div>
       <div class="card"><h2>History</h2>
         <div class="feed">${p.history.slice().reverse().map((h) => `<div class="feed-item"><div class="blockbadge ${h.action === 'locked' ? 'g' : ''}">${h.action === 'updated' ? 'r' + h.revision : h.action[0].toUpperCase()}</div><div><div><b>${esc(h.action === 'created' ? 'Created' : h.action === 'updated' ? `Revision ${h.revision}` : h.action === 'locked' ? 'Locked & submitted' : 'Retired')}</b> ${txLink(h.tx)}</div><div class="small muted">${h.changed?.length ? esc(h.changed.map(fieldLabel).join(', ')) : h.reason ? esc(h.reason) : h.contentHash ? 'fingerprint ' + short(h.contentHash, 8) : ''}</div></div><div class="small muted">${ago(h.at)}</div></div>`).join('')}</div>
@@ -636,7 +766,7 @@ function bindProject() {
 // --------------------------------------------------------------- console
 async function viewConsole() {
   const active = Wallet.active();
-  if (!active) return `${head('Console', 'Governance console')}<div class="note plain">Connect a wallet with the governance or stablecoin-issuer role to use the console. ${LOCAL ? 'Pick the Fedrok AG governance identity on the <a href="#/wallet">Wallet</a> page.' : 'On the devnet these keys are in <code>devnet/keys/</code>.'}</div>`;
+  if (!active) return `${head('Console', 'Governance console')}<div class="note plain">Sign in with the governance or stablecoin-issuer account to use the console.${LOCAL ? demoRole('Fedrok AG governance', 'Demo: sign in as Fedrok governance') : ' On the devnet these keys are in <code>devnet/keys/</code>.'}</div>`;
   const acct = await api.account(active.address);
   const roles = acct.roles;
   const isGov = roles.includes('governance'), isIss = roles.includes('stablecoin-issuer');
@@ -944,7 +1074,7 @@ async function viewDedication(id) {
 
 async function viewMember() {
   const w = Wallet.active();
-  const pick = LOCAL ? 'Pick a <b>Garden member</b> identity on the <a href="#/wallet">Wallet</a> page to see a subscriber’s dashboard.' : 'Connect the wallet linked to your Garden membership.';
+  const pick = 'Sign in with the account linked to your Garden membership.' + demoRole('Garden member (Mensah family)', 'Demo: view as a Garden member');
   if (!w) return `${head('Personal Legacy Garden', 'My trees')}<div class="note plain">${pick}</div>`;
   const acct = await api.account(w.address);
   const ds = acct.dedications || [];
@@ -978,10 +1108,10 @@ async function viewMember() {
 
 async function viewSteward() {
   const w = Wallet.active();
-  const intro = LOCAL ? 'Pick the <b>Garden operator</b> or <b>Garden field steward</b> identity on the <a href="#/wallet">Wallet</a> page.' : 'Connect the Garden operator or a steward wallet.';
+  const intro = 'Sign in with the Garden operator or a steward account.' + demoRole('Garden operator', 'Demo: sign in as the Garden operator') + demoRole('Garden field steward', 'Demo: sign in as a field steward');
   if (!w) return `${head('Personal Legacy Garden', 'Steward console')}<div class="note plain">${intro}</div>`;
   const [acct, gardens] = await Promise.all([api.account(w.address), api.get('/api/gardens')]);
-  if (!isGardenRole(acct.roles) || !gardens.length) return `${head('Personal Legacy Garden', 'Steward console')}<div class="note plain">This wallet is not the operator or a steward of a Garden. ${intro}</div>`;
+  if (!isGardenRole(acct.roles) || !gardens.length) return `${head('Personal Legacy Garden', 'Steward console')}<div class="note plain">This account is not the operator or a steward of a Garden. ${intro}</div>`;
   const g = gardens.find((x) => x.operator === w.address || x.stewards.some((s) => s.address === w.address && s.active));
   const [full, deds] = await Promise.all([api.get('/api/garden/' + g.id), api.get('/api/dedications?garden=' + g.id)]);
   const isOp = g.operator === w.address;
@@ -1117,7 +1247,7 @@ function renderFoot(live) {
   const s = STATUS;
   const w = Wallet.active();
   document.getElementById('side-foot').innerHTML = s
-    ? `<div><span class="dot ${live ? 'live' : ''}"></span>${esc(s.node)} · #${Number(s.height).toLocaleString('en-GB')}</div><div style="margin-top:6px">${w ? `Wallet: <a style="color:#fff" href="#/wallet">${esc(w.name)}</a>` : '<a style="color:#fff" href="#/wallet">Connect a wallet</a>'}</div>`
+    ? `<div><span class="dot ${live ? 'live' : ''}"></span>${esc(s.node)} · #${Number(s.height).toLocaleString('en-GB')}</div><div style="margin-top:6px">${w ? `Signed in: <a style="color:#fff" href="#/wallet">${esc(w.name)}</a>` : '<a style="color:#fff" href="#/wallet" data-signin>Sign in</a>'}</div>`
     : '<span class="dot"></span>Connecting…';
 }
 

@@ -147,6 +147,7 @@ const A = {
     enc: (p) => [[num(p.projectId, 'PRJ', 'projectId'), str(p.reason)]],
     dec: (a) => ({ projectId: ids.project(a[0]), reason: a[1] }),
   },
+  profile_set: { c: 'ProjectRegistry', fn: 'setProfile', enc: (p) => [[str(p.name), String(p.organisation || '').trim()]], dec: (a) => ({ name: a[0], organisation: a[1] }) },
   gov_add_project_type: { c: 'ProjectRegistry', fn: 'addProjectType', enc: (p) => [[str(p.projectType)]], dec: (a) => ({ projectType: a[0] }) },
   gov_add_validator: { c: 'FedrokGovernance', fn: 'addValidator', enc: (p) => [[addr(p.validator, 'validator'), str(p.name)]], dec: (a) => ({ validator: a[0].toLowerCase(), name: a[1] }) },
   gov_remove_validator: { c: 'FedrokGovernance', fn: 'removeValidator', enc: (p) => [[addr(p.validator, 'validator')]], dec: (a) => ({ validator: a[0].toLowerCase() }) },

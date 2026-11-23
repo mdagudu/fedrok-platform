@@ -91,20 +91,24 @@ export class ApiCore {
     const dedications = Object.values(G.dedications).filter((d) => d.holder === addr).map((d) => this.dedicationView(d.id));
     if (dedications.length) roles.push('garden-member');
     const pending = [...this.chain.mempool.values()].filter((t) => t.from === addr).map((t) => ({ hash: t.hash, type: t.type, nonce: t.nonce }));
-    return { address: addr, fdk: a.fdk, stable: a.stable, nonce: a.nonce, nextNonce: this.chain.nextNonce(addr), allowances: a.allowances || {}, roles, projects, dedications, history, pending };
+    return { address: addr, profile: this.profileOf(addr), fdk: a.fdk, stable: a.stable, nonce: a.nonce, nextNonce: this.chain.nextNonce(addr), allowances: a.allowances || {}, roles, projects, dedications, history, pending };
   }
 
   // ------------------------------------------------- project registry views
+  profileOf(addr) {
+    return this.chain.state.profiles?.[String(addr || '').toLowerCase()] || null;
+  }
+
   _projectSummary(p) {
     const { history, details, ...rest } = p;
-    return { ...rest, detailCount: Object.keys(details).length };
+    return { ...rest, ownerProfile: this.profileOf(p.owner), detailCount: Object.keys(details).length };
   }
 
   projectView(id) {
     const p = this.chain.state.projects[String(id).toUpperCase()];
     if (!p) return null;
     const pending = [...this.chain.mempool.values()].filter((t) => t.type && t.type.startsWith('project_') && t.payload?.projectId === p.id).map((t) => ({ hash: t.hash, type: t.type }));
-    return { ...p, contentHash: projectContentHash(p), editable: p.status === 'draft', pending };
+    return { ...p, ownerProfile: this.profileOf(p.owner), contentHash: projectContentHash(p), editable: p.status === 'draft', pending };
   }
 
   // ------------------------------------------------- Legacy Garden views

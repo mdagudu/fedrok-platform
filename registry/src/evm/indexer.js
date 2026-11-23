@@ -34,6 +34,7 @@ export function createProjection(genesis, genesisHash) {
     contracts: ADDRESSES,
     accounts: {},
     projectTypes: [...(genesis.projectTypes || [])],
+    profiles: {},
     projects: {},
     fdkCap: BigInt(genesis.fdkCap),
     supply: { fdkMinted: 0n, fdkBurned: 0n, fdkFees: 0n, stableMinted: 0n, stableBurned: 0n },
@@ -192,6 +193,12 @@ export class Indexer {
       case 'FedrokGovernance.ParamSet':
         return { event: 'ParamSet', key: a.key, value: a.value.toString() };
       // ---------------------------------------------------------- project registry
+      case 'ProjectRegistry.ProfileSet': {
+        const acct = a.account.toLowerCase();
+        s.profiles = s.profiles || {};
+        s.profiles[acct] = { name: a.name, organisation: a.organisation, updatedAt: ts };
+        return { event: 'ProfileSet', account: acct, name: a.name, organisation: a.organisation };
+      }
       case 'ProjectRegistry.ProjectTypeAdded':
         return { event: 'ProjectTypeAdded', projectType: a.projectType };
       case 'ProjectRegistry.ProjectCreated': {

@@ -52,7 +52,16 @@ contract ProjectRegistry {
         string details;
     }
 
+    /// A readable name for an account, so project pages can show who owns
+    /// a record. Set by the account itself; anyone can read it.
+    struct Profile {
+        string name;
+        string organisation;
+        uint64 updatedAt;
+    }
+
     address public immutable governance;
+    mapping(address => Profile) internal profiles;
     string[] public projectTypes;
     mapping(bytes32 => bool) public isProjectType;
 
@@ -60,6 +69,7 @@ contract ProjectRegistry {
     uint64 public projectCount;
 
     event ProjectTypeAdded(string projectType);
+    event ProfileSet(address indexed account, string name, string organisation);
     event ProjectCreated(uint64 indexed id, address indexed owner, Kind kind, string projectType, string name);
     event ProjectUpdated(uint64 indexed id, address indexed owner, uint32 revision, bytes32 contentHash);
     event ProjectLocked(uint64 indexed id, address indexed owner, uint32 revision, bytes32 contentHash);
@@ -68,6 +78,18 @@ contract ProjectRegistry {
     constructor(address governance_, string[] memory types_) {
         governance = governance_;
         for (uint256 i = 0; i < types_.length; i++) _addType(types_[i]);
+    }
+
+    // ----------------------------------------------------------------- profiles
+    function setProfile(string calldata name, string calldata organisation) external {
+        require(bytes(name).length >= 2 && bytes(name).length <= 80, "name must be 2-80 characters");
+        require(bytes(organisation).length <= 120, "organisation is too long (max 120 chars)");
+        profiles[msg.sender] = Profile(name, organisation, uint64(block.timestamp));
+        emit ProfileSet(msg.sender, name, organisation);
+    }
+
+    function profile(address account) external view returns (Profile memory) {
+        return profiles[account];
     }
 
     // ------------------------------------------------------------ project types

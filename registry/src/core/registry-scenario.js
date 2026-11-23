@@ -8,6 +8,14 @@ import { addressFromPrivate } from './crypto.js';
 import { fdk } from './units.js';
 import { projectContentHash } from '../evm/actions.js';
 
+// Owner profiles (fictional): the readable name shown on project pages.
+const PROFILES = {
+  png: { name: 'Ruth Kaiwa', organisation: 'Kikori Basin Restoration Partnership' },
+  kenya: { name: 'Grace Achieng', organisation: 'Lakeside Clean Energy' },
+  peru: { name: 'Mateo Quispe', organisation: 'Puna Wetlands Initiative' },
+  zurich: { name: 'Anna Keller', organisation: 'Zurich Rooftop Solar Cooperative' },
+};
+
 const PROJECTS = [
   {
     owner: 'png', kind: 'registered', projectType: 'Reforestation & afforestation', lock: true,
@@ -119,6 +127,10 @@ export async function runRegistryScenario(c, K, log = console.log) {
   const owners = ['png', 'kenya', 'peru', 'zurich'];
   await all(owners.map((o) => () => c.send(K.faucet, 'transfer', { to: addr(K[o]), asset: 'FDK', amount: fdk('25').toString() })));
   ok(`${owners.length} project owners funded`);
+
+  step('Project owners set up their profiles');
+  await all(owners.map((o) => () => c.send(K[o], 'profile_set', PROFILES[o])));
+  ok(owners.map((o) => PROFILES[o].organisation).join(', '));
 
   step('Registering and proposing environmental projects');
   const created = [];

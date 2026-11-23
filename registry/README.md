@@ -17,7 +17,7 @@ What is different from the main platform:
 
 ## Hosted demo
 
-`npm run build:demo` builds `dist/fedrok-registry-demo.html`: the full web app plus a complete network running inside the browser (three authority validators, the EVM with the registry contracts, faucet and demo data). Each visitor gets their own network, saved in their browser. The build seeds it with demo projects first, so the page opens on a working registry. Pick a demo identity on the **Wallet** page, or create a wallet and press **Get devnet FDK**.
+`npm run build:demo` builds `dist/fedrok-registry-demo.html`: the full web app plus a complete network running inside the browser (three authority validators, the EVM with the registry contracts, faucet and demo data). Each visitor gets their own network, saved in their browser. The build seeds it with demo projects first, so the page opens on a working registry. Sign in on **My account** with email or a browser wallet, then register a project.
 
 ## Quick start
 
@@ -34,11 +34,12 @@ Open **http://127.0.0.1:8545**. To give Sprout a Claude connection for every vis
 
 ## How a project works
 
-1. **Register or propose.** On **Register a project**, choose *Register your project* (you run it) or *Propose a project* (an idea), pick the environmental project type from the dropdown, and give it a name. This creates a **draft** record on-chain, owned by your wallet.
-2. **Sprout interviews you.** You land on the new project page and Sprout opens by itself. It asks about the project one topic at a time (objectives, activities, location, beneficiaries, expected impact, monitoring, land tenure, partners, budget, risks, SDGs and more) and saves each answer to the project record as an on-chain revision.
-3. **Change it any time.** While the project is a draft, talk to Sprout ("change the start date to March 2027", "add WWF Kenya as a partner") or use **Edit by hand**. Every change is a transaction in the project's public history.
-4. **Lock & submit.** When the record is complete, press **Lock & submit**. The ProjectRegistry contract stores a fingerprint of the final content and from then on rejects every change, from anyone: the owner, governance, and Sprout (which signs with the owner's key). The page also stops offering Sprout its edit tool.
-5. **Retire.** A locked (or draft) project can still be retired with a public reason. Its content stays on the ledger unchanged.
+1. **Sign in.** On **My account**, continue with email (Fedrok creates an account key in the browser, no crypto wallet needed) or connect MetaMask or another browser wallet (one signature message derives your Fedrok key; no funds move, and the same wallet gives the same account on any device). Your name and organisation are saved as an on-chain profile (`ProjectRegistry.setProfile`) and shown on your project pages. On the devnet the faucet adds a little FDK for network fees automatically.
+2. **Register or propose.** On **Register a project**, choose *Register your project* (you run it) or *Propose a project* (an idea), pick the environmental project type from the dropdown, and give it a name. This creates a **draft** record on-chain, owned by your wallet.
+3. **Sprout interviews you.** You land on the new project page and Sprout opens by itself. It asks about the project one topic at a time (objectives, activities, location, beneficiaries, expected impact, monitoring, land tenure, partners, budget, risks, SDGs and more) and saves each answer to the project record as an on-chain revision.
+4. **Change it any time.** While the project is a draft, talk to Sprout ("change the start date to March 2027", "add WWF Kenya as a partner") or use **Edit by hand**. Every change is a transaction in the project's public history.
+5. **Lock & submit.** When the record is complete, press **Lock & submit**. The ProjectRegistry contract stores a fingerprint of the final content and from then on rejects every change, from anyone: the owner, governance, and Sprout (which signs with the owner's key). The page also stops offering Sprout its edit tool.
+6. **Retire.** A locked (or draft) project can still be retired with a public reason. Its content stays on the ledger unchanged.
 
 Rules enforced by `contracts/ProjectRegistry.sol`:
 
@@ -47,6 +48,7 @@ Rules enforced by `contracts/ProjectRegistry.sol`:
 - `updateProject` reverts with *"project is locked and submitted: it can no longer be changed"* once a project is locked or retired.
 - `lockAndSubmit` needs a summary and details, and the fingerprint of the content the owner reviewed, so nobody can slip in a change between review and lock.
 - `retire` needs a reason and works once.
+- `setProfile(name, organisation)` lets an account name itself (name 2–80 characters); project views include the owner's profile.
 
 ## Sprout, the AI project guide
 
@@ -84,12 +86,12 @@ Sprout picks the first connection that is available:
 | `FedrokGovernance` | Admin, stablecoin issuer, the authority validator set, network parameters |
 | `FDKIssuer` | The fixed FDK supply cap (FDK pays network fees) and burns |
 | `FUSD` | ERC-20 settlement stablecoin stand-in (6 decimals) |
-| `ProjectRegistry` | Project types, projects, revisions, lock & submit, retirement |
+| `ProjectRegistry` | Project types, owner profiles, projects, revisions, lock & submit, retirement |
 | `LegacyGarden` | Personal Legacy Garden: gardens, dedications, planting batches, trees |
 
 Every node re-executes each block and rejects it if it was sealed by anyone other than the slot's validator, or if the state root, receipts or fees differ. Contract sources are in `contracts/`; `npm run compile` rebuilds `src/evm/artifacts.json` with solc 0.8.28.
 
-API additions: `/api/projects?type=&status=&kind=&owner=`, `/api/project/:id`, `/api/project-types`, `/api/validators`; JSON-RPC `registry_getProjects`, `registry_getProject`, `poa_getValidators`. Actions: `project_create`, `project_update`, `project_lock`, `project_retire`, `gov_add_project_type`, `gov_add_validator`, `gov_remove_validator`.
+API additions: `/api/projects?type=&status=&kind=&owner=`, `/api/project/:id`, `/api/project-types`, `/api/validators`; JSON-RPC `registry_getProjects`, `registry_getProject`, `poa_getValidators`. Actions: `profile_set`, `project_create`, `project_update`, `project_lock`, `project_retire`, `gov_add_project_type`, `gov_add_validator`, `gov_remove_validator`.
 
 ## Personal Legacy Garden
 
