@@ -158,8 +158,8 @@ export async function startLocalNetwork({ snapshot = null } = {}) {
       events.on('message', cb);
     },
     demoIdentities: [
-      { name: 'Project developer (Peru)', role: 'Owns a draft proposal: continue it with Verda', key: data.keys['developer-peru'] },
-      { name: 'Community cooperative (Zurich)', role: 'Owns a nearly empty draft: let Verda interview you', key: data.keys['community-zurich'] },
+      { name: 'Project developer (Peru)', role: 'Owns a draft proposal: continue it with Sprout', key: data.keys['developer-peru'] },
+      { name: 'Community cooperative (Zurich)', role: 'Owns a nearly empty draft: let Sprout interview you', key: data.keys['community-zurich'] },
       { name: 'Project developer (Kenya)', role: 'Owns two locked & submitted projects', key: data.keys['developer-kenya'] },
       { name: 'Project developer (PNG)', role: 'Owns a locked project and a retired proposal', key: data.keys['developer-png'] },
       { name: 'Fedrok AG governance', role: 'Validators, project types, parameters', key: data.keys.governance },

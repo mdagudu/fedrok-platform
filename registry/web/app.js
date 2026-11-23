@@ -1,12 +1,12 @@
 // Fedrok Registry web app: environmental project registry (register or
-// propose a project, project pages with the Verda assistant, lock & submit,
+// propose a project, project pages with the Sprout assistant, lock & submit,
 // retire), explorer, wallet, Legacy Garden, governance console and docs.
 // Vanilla ES modules. Every action is an ordinary EIP-1559 Ethereum
 // transaction to a Fedrok system contract, signed in the browser.
 import { FedrokClient } from '/core/client.js';
 import { generatePrivateKey, addressFromPrivate, isAddress, sha256Hex } from '/core/crypto.js';
 import { DETAIL_FIELDS, CORE_FIELDS, missingFields, completeness } from '/core/project-fields.js';
-import { createVerda } from './verda.js';
+import { createSprout } from './sprout.js';
 import { qrSvg } from './qr.js';
 import { formatFdk, formatStable, fdk, stable } from '/core/units.js';
 
@@ -218,8 +218,8 @@ async function viewOverview() {
   </div>
   <div class="grid g3 section">
     <div class="card feature">${icon('plus', 'icon-outline')}<div><h3>Register or propose</h3><p>Start from a list of ${s.projectTypes.length} environmental project types, from reforestation and mangroves to clean cookstoves and solar.</p></div></div>
-    <div class="card feature">${icon('spark', 'icon-outline')}<div><h3>Verda builds your page</h3><p>Verda, Fedrok's AI project guide, interviews you about the project and writes every answer to your project page. Talk to Verda any time to make changes.</p></div></div>
-    <div class="card feature">${icon('lock', 'icon-outline')}<div><h3>Lock & submit</h3><p>When the record is complete, lock it. The registry contract then refuses every change, from anyone, including Verda. You can still retire the project.</p></div></div>
+    <div class="card feature">${icon('spark', 'icon-outline')}<div><h3>Sprout builds your page</h3><p>Sprout, Fedrok's AI project guide, interviews you about the project and writes every answer to your project page. Talk to Sprout any time to make changes.</p></div></div>
+    <div class="card feature">${icon('lock', 'icon-outline')}<div><h3>Lock & submit</h3><p>When the record is complete, lock it. The registry contract then refuses every change, from anyone, including Sprout. You can still retire the project.</p></div></div>
   </div>
   <a class="card feature section" href="#/garden" style="display:flex;margin-top:18px;text-decoration:none">${icon('tree', 'icon-outline')}<div><h3>Personal Legacy Garden · Bibiani pilot</h3><p>Dedicated memorial trees recorded on Fedrok: every subscription, planting, GPS position, inspection and replacement, with a QR tag on each tree. Open the Garden →</p></div></a>`;
 }
@@ -407,9 +407,9 @@ function bindWallet() {
 }
 
 // ------------------------------------------------------- project registry
-const verda = createVerda({ api, sendTx, render: () => render(), toast, esc, status: () => STATUS, LOCAL });
+const sprout = createSprout({ api, sendTx, render: () => render(), toast, esc, status: () => STATUS, LOCAL });
 // Register your project / Propose a project, the registry, and project pages
-// with the Verda assistant. Lock & submit and retirement are enforced by the
+// with the Sprout assistant. Lock & submit and retirement are enforced by the
 // ProjectRegistry contract: the page only offers what the contract allows.
 const fieldLabel = (k) => CORE_FIELDS.concat(DETAIL_FIELDS).find((f) => f.key === k)?.label || k;
 let CURRENT_PROJECT = null;
@@ -446,7 +446,7 @@ async function viewNewProject() {
   const w = Wallet.active();
   const acct = w ? await api.account(w.address) : null;
   const lowFdk = acct && BigInt(acct.fdk) < fdk('0.05');
-  return `${head('Register a project', 'Register your project or propose a project', 'Put an environmental project on the Fedrok ledger. Choose what kind of project it is to begin with; Verda, your AI project guide, then takes you to the new project page and helps you fill in the details.')}
+  return `${head('Register a project', 'Register your project or propose a project', 'Put an environmental project on the Fedrok ledger. Choose what kind of project it is to begin with; Sprout, your AI project guide, then takes you to the new project page and helps you fill in the details.')}
   ${!w ? `<div class="note">Connect a wallet first: the project will belong to that wallet, and only it can edit, lock or retire the project. <a href="#/wallet">Open the wallet</a>${LOCAL ? ' (pick a demo identity or create a new wallet and use the faucet)' : ''}.</div>` : lowFdk ? `<div class="note">Your wallet has almost no FDK for the network fee. ${s.faucet ? '<button class="btn sm accent" id="np-faucet" type="button">Get devnet FDK</button>' : 'Ask for FDK first.'}</div>` : ''}
   <form class="card newp" id="newp">
     <h2>1. What would you like to do?</h2>
@@ -459,7 +459,7 @@ async function viewNewProject() {
     <h2 style="margin-top:26px">3. The basics</h2>
     <div class="stack">
       <label>Project name<input name="name" minlength="3" maxlength="120" placeholder="e.g. Riverside Mangrove Restoration" required></label>
-      <label>One-line summary <span class="hint">optional: Verda will ask you about it</span><textarea name="summary" maxlength="1000" rows="2" placeholder="What the project does, for whom, and where"></textarea></label>
+      <label>One-line summary <span class="hint">optional: Sprout will ask you about it</span><textarea name="summary" maxlength="1000" rows="2" placeholder="What the project does, for whom, and where"></textarea></label>
       <div class="row"><label>Location<input name="location" maxlength="160" placeholder="Region, district or site name"></label><label>Country<input name="country" maxlength="80" placeholder="e.g. Kenya"></label></div>
     </div>
     <div class="actions" style="margin-top:20px"><button class="btn" ${w ? '' : 'disabled'}>${icon('plus')} Create project page</button><span class="small muted">Creates a draft on-chain. You can change everything until you lock & submit it.</span></div>
@@ -480,7 +480,7 @@ function bindNewProject() {
       const r = await sendTx('project_create', { kind: d.kind, projectType: d.projectType, name: d.name.trim(), summary: d.summary.trim(), location: d.location.trim(), country: d.country.trim() });
       const id = r.events.find((x) => x.event === 'ProjectCreated').projectId;
       toast(`${id} created in block ${blockLink(r.height)}`, 'ok');
-      verda.welcome(id);
+      sprout.welcome(id);
       go('/project/' + id);
     } catch (err) {
       toast('Could not create the project: ' + esc(err.message), 'err', 9000);
@@ -525,11 +525,11 @@ async function viewProject(id) {
   const filled = DETAIL_FIELDS.filter((f) => !missing.includes(f.key));
   const empty = DETAIL_FIELDS.filter((f) => missing.includes(f.key));
   const lockNote = p.status === 'locked'
-    ? `<div class="note lockd">${icon('lock', 'icon-outline')}<div><b>Locked & submitted on ${day(p.lockedAt)}.</b> This record is permanently read-only. The registry contract rejects every change, from anyone, including the owner and Verda. ${owner ? 'You can still retire the project.' : ''}<div class="small mono" style="margin-top:6px">Content fingerprint ${esc(p.lockedHash)}</div></div></div>`
+    ? `<div class="note lockd">${icon('lock', 'icon-outline')}<div><b>Locked & submitted on ${day(p.lockedAt)}.</b> This record is permanently read-only. The registry contract rejects every change, from anyone, including the owner and Sprout. ${owner ? 'You can still retire the project.' : ''}<div class="small mono" style="margin-top:6px">Content fingerprint ${esc(p.lockedHash)}</div></div></div>`
     : p.status === 'retired'
       ? `<div class="note plain">${icon('lock', 'icon-outline')} <b>Retired on ${day(p.retiredAt)}</b>${p.retiredAfterLock ? ' after it was locked & submitted' : ''}: ${esc(p.retireReason)}. The record stays on the ledger, unchanged.</div>`
-      : owner ? `<div class="note plain"><b>Draft.</b> You can keep changing this project, with Verda or by hand, until you lock & submit it. ${p.pending.length ? `<br><span class="pill grad">${p.pending.length} change(s) waiting for the next block</span>` : ''}</div>` : '';
-  return `${head(`${p.kind === 'proposed' ? 'Proposed project' : 'Registered project'} · ${p.id}`, esc(p.name), `${esc(p.projectType)}${p.location || p.country ? ' · ' + esc([p.location, p.country].filter(Boolean).join(', ')) : ''}`, `<div class="actions">${statusPill(p.status)}${owner && draft ? `<button class="btn accent sm" id="open-verda" type="button">${icon('spark')} Talk to Verda</button>` : `<button class="btn ghost sm" id="open-verda" type="button">${icon('spark')} Ask Verda</button>`}</div>`)}
+      : owner ? `<div class="note plain"><b>Draft.</b> You can keep changing this project, with Sprout or by hand, until you lock & submit it. ${p.pending.length ? `<br><span class="pill grad">${p.pending.length} change(s) waiting for the next block</span>` : ''}</div>` : '';
+  return `${head(`${p.kind === 'proposed' ? 'Proposed project' : 'Registered project'} · ${p.id}`, esc(p.name), `${esc(p.projectType)}${p.location || p.country ? ' · ' + esc([p.location, p.country].filter(Boolean).join(', ')) : ''}`, `<div class="actions">${statusPill(p.status)}${owner && draft ? `<button class="btn accent sm" id="open-sprout" type="button">${icon('spark')} Talk to Sprout</button>` : `<button class="btn ghost sm" id="open-sprout" type="button">${icon('spark')} Ask Sprout</button>`}</div>`)}
   ${lockNote}
   <div class="pgrid2">
     <div class="stack-col">
@@ -544,10 +544,10 @@ async function viewProject(id) {
         </div>
       </div>
       <div class="card"><h2>Project details</h2>
-        ${filled.length ? `<div class="kv details">${filled.map((f) => `<div>${esc(f.label)}</div><div>${fieldValue(p.details[f.key])}</div>`).join('')}</div>` : `<div class="empty">${draft ? 'No details yet. ' + (owner ? 'Talk to Verda to fill them in.' : '') : 'No details were recorded.'}</div>`}
+        ${filled.length ? `<div class="kv details">${filled.map((f) => `<div>${esc(f.label)}</div><div>${fieldValue(p.details[f.key])}</div>`).join('')}</div>` : `<div class="empty">${draft ? 'No details yet. ' + (owner ? 'Talk to Sprout to fill them in.' : '') : 'No details were recorded.'}</div>`}
         ${draft && empty.length ? `<div class="small muted" style="margin-top:14px">Still to add: ${empty.map((f) => esc(f.label)).join(' · ')}</div>` : ''}
       </div>
-      ${owner && draft ? `<details class="card" id="manual"><summary><h2 style="display:inline">Edit by hand</h2> <span class="small muted">Verda can do this for you, but you can also edit every field yourself.</span></summary>
+      ${owner && draft ? `<details class="card" id="manual"><summary><h2 style="display:inline">Edit by hand</h2> <span class="small muted">Sprout can do this for you, but you can also edit every field yourself.</span></summary>
         <form class="stack" id="pedit" style="margin-top:16px">
           <label>Project name<input name="name" value="${esc(p.name)}" minlength="3" maxlength="120" required></label>
           <label>Summary<textarea name="summary" rows="3" maxlength="1000">${esc(p.summary)}</textarea></label>
@@ -568,7 +568,7 @@ async function viewProject(id) {
           ${draft ? `<button class="btn" id="lock-btn" type="button">${icon('lock')} Lock & submit</button>` : ''}
           <button class="btn ghost" id="retire-btn" type="button">Retire project</button>
         </div>
-        ${draft ? '<p class="small muted" style="margin-bottom:0">Lock & submit makes the record permanently read-only for everyone, Verda included. Only retirement stays possible.</p>' : ''}` : ''}
+        ${draft ? '<p class="small muted" style="margin-bottom:0">Lock & submit makes the record permanently read-only for everyone, Sprout included. Only retirement stays possible.</p>' : ''}` : ''}
         ${!w ? `<p class="small muted">Connect the owner's wallet to edit this project.</p>` : ''}
       </div>
       <div class="card"><h2>History</h2>
@@ -584,7 +584,7 @@ function contentOf(p) {
 
 function bindProject() {
   const p = CURRENT_PROJECT;
-  document.getElementById('open-verda')?.addEventListener('click', () => verda.open());
+  document.getElementById('open-sprout')?.addEventListener('click', () => sprout.open());
   document.getElementById('pedit')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const d = formData(e.target);
@@ -599,7 +599,7 @@ function bindProject() {
   document.getElementById('lock-btn')?.addEventListener('click', () => {
     const m = missingFields(p);
     modal(`<h2>Lock & submit ${esc(p.id)}?</h2>
-      <p>Locking freezes <b>${esc(p.name)}</b> on the Fedrok ledger for good. After this, the registry contract rejects every change, from you, from governance and from Verda. You will still be able to <b>retire</b> the project.</p>
+      <p>Locking freezes <b>${esc(p.name)}</b> on the Fedrok ledger for good. After this, the registry contract rejects every change, from you, from governance and from Sprout. You will still be able to <b>retire</b> the project.</p>
       ${m.length ? `<div class="note">These fields are still empty: ${m.map((k) => esc(fieldLabel(k))).join(', ')}. You can lock anyway, but they can never be added later.</div>` : ''}
       <p class="small">You are locking exactly the version shown on the page, fingerprint <span class="mono">${esc(short(p.contentHash, 14))}</span>. If it changes before your transaction is mined, the lock is refused.</p>
       <label class="check"><input type="checkbox" name="ack" required> I understand this cannot be undone</label>
@@ -607,7 +607,7 @@ function bindProject() {
       try {
         const r = await sendTx('project_lock', { projectId: p.id, contentHash: p.contentHash });
         toast(`${esc(p.id)} locked and submitted in block ${blockLink(r.height)}`, 'ok');
-        verda.notify(`The project was locked & submitted. It is now permanently read-only, so I can no longer change it.`);
+        sprout.notify(`The project was locked & submitted. It is now permanently read-only, so I can no longer change it.`);
         render();
       } catch (e) {
         toast('Lock failed: ' + esc(e.message), 'err', 9000);
@@ -623,7 +623,7 @@ function bindProject() {
       try {
         const r = await sendTx('project_retire', { projectId: p.id, reason: d.reason.trim() });
         toast(`${esc(p.id)} retired in block ${blockLink(r.height)}`, 'ok');
-        verda.notify('The project was retired. Its record stays on the ledger unchanged.');
+        sprout.notify('The project was retired. Its record stays on the ledger unchanged.');
         render();
       } catch (e) {
         toast('Retirement failed: ' + esc(e.message), 'err', 9000);
@@ -716,7 +716,7 @@ console.log(p.name, ['draft', 'locked', 'retired'][p.status]);</pre>
     ['GET', '/api/status', 'Chain, consensus, supply and peer status'], ['GET', '/api/blocks?limit=&before=', 'Recent block summaries'], ['GET', '/api/block/:heightOrHash', 'Full block with transactions'],
     ['GET', '/api/tx/:hash', 'Transaction with status, gas, logs and decoded events'], ['GET', '/api/account/:address', 'Balances, projects, roles, history, next nonce'], ['POST', '/api/tx', 'Submit a signed raw Ethereum transaction: { raw }'], ['GET', '/api/contracts', 'System contract addresses'],
     ['GET', '/api/projects?type=&status=&kind=&owner=', 'Registered and proposed projects'], ['GET', '/api/project/:id', 'Full project record with details, history and content fingerprint'], ['GET', '/api/project-types', 'Environmental project types offered when creating a project'], ['GET', '/api/validators', 'Proof of Authority validator set'],
-    ['POST', '/api/assistant/v1/messages', 'Claude API proxy for the Verda assistant (only when the node has ANTHROPIC_API_KEY)'],
+    ['POST', '/api/assistant/v1/messages', 'Claude API proxy for the Sprout assistant (only when the node has ANTHROPIC_API_KEY)'],
     ['GET', '/api/gardens · /api/garden/:id', 'Legacy Gardens with batches, stats, site plan and field records'], ['GET', '/api/tree/:id · /api/dedication/:id', 'Tree record (plantings, inspections, replacements) and subscribership certificate'], ['GET', '/api/dedications?holder=&garden=', 'Dedications held by a member account'], ['GET', '/api/search?q=', 'Resolve a block, tx, address, project, tree or dedication'],
     ['WS', '/ws', 'Live feed of blocks and transactions'],
   ].map(([m, p, d]) => `<tr><td><span class="pill grey">${m}</span></td><td class="mono">${p}</td><td>${d}</td></tr>`))}</div>
@@ -1144,8 +1144,8 @@ async function render() {
     if (!changed) window.scrollTo(0, scroll);
     else window.scrollTo(0, 0);
     route[2]?.(m[1] || '');
-    if (path.startsWith('/project/') && CURRENT_PROJECT) verda.attach(CURRENT_PROJECT, Wallet.active());
-    else verda.detach();
+    if (path.startsWith('/project/') && CURRENT_PROJECT) sprout.attach(CURRENT_PROJECT, Wallet.active());
+    else sprout.detach();
     document.querySelectorAll('a[href^="#/"]').forEach((a) => a.setAttribute('href', toHash(a.getAttribute('href').slice(1))));
     document.getElementById('reset-net')?.addEventListener('click', () => LOCAL?.reset());
     document.getElementById('search')?.addEventListener('submit', async (e) => {

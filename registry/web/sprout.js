@@ -1,16 +1,16 @@
-// Verda: Fedrok's AI project guide, built on Claude.
+// Sprout: Fedrok's AI project guide, built on Claude.
 //
-// Verda lives on every project page. Right after someone creates a project it
+// Sprout lives on every project page. Right after someone creates a project it
 // opens by itself and interviews the owner, writing each answer to the
-// project record on-chain. Afterwards the owner can talk to Verda at any time
+// project record on-chain. Afterwards the owner can talk to Sprout at any time
 // to change the project, until it is locked & submitted.
 //
-// How the lock holds: Verda has no lock or retire tool, only the owner can
+// How the lock holds: Sprout has no lock or retire tool, only the owner can
 // press those buttons. Its one write tool, update_project, signs an ordinary
 // project_update transaction with the owner's wallet. The ProjectRegistry
 // contract rejects that transaction for any project that is locked or
 // retired, so even a confused or manipulated assistant cannot change a locked
-// project. On a locked project the tool is not offered at all, and Verda only
+// project. On a locked project the tool is not offered at all, and Sprout only
 // answers questions.
 //
 // Connection to Claude (claude-opus-5-5 by default), in this order:
@@ -20,15 +20,15 @@
 //      sent straight to api.anthropic.com;
 //   3. otherwise "guided mode": a scripted interview without AI, so the
 //      project page still works.
-// fedrok.com: Verda may read pages on fedrok.com with Claude's web fetch
+// fedrok.com: Sprout may read pages on fedrok.com with Claude's web fetch
 // tool (limited to that domain) to answer questions about Fedrok.
 import Anthropic from '@anthropic-ai/sdk';
 import { DETAIL_FIELDS, CORE_FIELDS, missingFields, completeness } from '/core/project-fields.js';
 
-export const AGENT_NAME = 'Verda';
+export const AGENT_NAME = 'Sprout';
 const MODEL = 'claude-opus-5-5';
 const FEDROK_SITE = 'https://fedrok.com';
-const KEY_STORE = 'fedrok.verda.apiKey';
+const KEY_STORE = 'fedrok.sprout.apiKey';
 const MAX_STEPS = 8;
 const ALL_FIELDS = CORE_FIELDS.concat(DETAIL_FIELDS);
 const label = (k) => ALL_FIELDS.find((f) => f.key === k)?.label || k;
@@ -93,7 +93,7 @@ const tools = (canEdit) => [
 ];
 const webFetch = { type: 'web_fetch_20260209', name: 'web_fetch', allowed_domains: ['fedrok.com', 'www.fedrok.com'], max_uses: 3 };
 
-export function createVerda({ api, sendTx, render, toast, esc, status }) {
+export function createSprout({ api, sendTx, render, toast, esc, status }) {
   const chats = new Map(); // projectId -> { messages: Anthropic messages, log: displayed bubbles, guided }
   let project = null;
   let wallet = null;
@@ -104,36 +104,36 @@ export function createVerda({ api, sendTx, render, toast, esc, status }) {
 
   // ---------------------------------------------------------------- panel
   const root = document.createElement('aside');
-  root.className = 'verda';
+  root.className = 'sprout';
   root.setAttribute('aria-label', `${AGENT_NAME} project guide`);
   root.innerHTML = `
-    <button class="verda-fab" type="button" aria-label="Open ${AGENT_NAME}"><span class="verda-orb"></span><span>${AGENT_NAME}</span></button>
-    <section class="verda-panel" hidden>
-      <header class="verda-head">
-        <span class="verda-orb big"></span>
+    <button class="sprout-fab" type="button" aria-label="Open ${AGENT_NAME}"><span class="sprout-orb"></span><span>${AGENT_NAME}</span></button>
+    <section class="sprout-panel" hidden>
+      <header class="sprout-head">
+        <span class="sprout-orb big"></span>
         <div><b>${AGENT_NAME}</b><small>Fedrok project guide · powered by Claude</small></div>
-        <button class="verda-icon" data-act="settings" type="button" title="Connection settings" aria-label="Connection settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
-        <button class="verda-icon" data-act="close" type="button" title="Close" aria-label="Close">×</button>
+        <button class="sprout-icon" data-act="settings" type="button" title="Connection settings" aria-label="Connection settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+        <button class="sprout-icon" data-act="close" type="button" title="Close" aria-label="Close">×</button>
       </header>
-      <div class="verda-mode"></div>
-      <div class="verda-settings" hidden></div>
-      <div class="verda-log" aria-live="polite"></div>
-      <form class="verda-input">
+      <div class="sprout-mode"></div>
+      <div class="sprout-settings" hidden></div>
+      <div class="sprout-log" aria-live="polite"></div>
+      <form class="sprout-input">
         <textarea rows="2" placeholder="Tell ${AGENT_NAME} about your project…" aria-label="Message ${AGENT_NAME}"></textarea>
         <button class="btn sm" type="submit">Send</button>
       </form>
-      <div class="verda-foot"><a href="${FEDROK_SITE}" target="_blank" rel="noopener">fedrok.com ↗</a><span class="verda-lockstate"></span></div>
+      <div class="sprout-foot"><a href="${FEDROK_SITE}" target="_blank" rel="noopener">fedrok.com ↗</a><span class="sprout-lockstate"></span></div>
     </section>`;
   document.body.appendChild(root);
   const $ = (sel) => root.querySelector(sel);
-  const panel = $('.verda-panel');
-  const log = $('.verda-log');
-  const input = $('.verda-input textarea');
+  const panel = $('.sprout-panel');
+  const log = $('.sprout-log');
+  const input = $('.sprout-input textarea');
 
-  $('.verda-fab').addEventListener('click', () => open());
+  $('.sprout-fab').addEventListener('click', () => open());
   $('[data-act=close]').addEventListener('click', () => close());
   $('[data-act=settings]').addEventListener('click', () => toggleSettings());
-  $('.verda-input').addEventListener('submit', (e) => {
+  $('.sprout-input').addEventListener('submit', (e) => {
     e.preventDefault();
     const text = input.value.trim();
     if (!text || busy) return;
@@ -143,7 +143,7 @@ export function createVerda({ api, sendTx, render, toast, esc, status }) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      $('.verda-input').requestSubmit();
+      $('.sprout-input').requestSubmit();
     }
   });
 
@@ -162,7 +162,7 @@ export function createVerda({ api, sendTx, render, toast, esc, status }) {
   }
 
   function toggleSettings(force) {
-    const box = $('.verda-settings');
+    const box = $('.sprout-settings');
     const show = force ?? box.hidden;
     box.hidden = !show;
     if (!show) return;
@@ -171,9 +171,9 @@ export function createVerda({ api, sendTx, render, toast, esc, status }) {
     box.innerHTML = c.mode === 'proxy'
       ? `<p>${AGENT_NAME} reaches Claude through this Fedrok node, which holds the API key. Nothing to set up.</p>`
       : `<p><b>Connect ${AGENT_NAME} to Claude.</b> Paste an Anthropic API key (from <a href="https://platform.claude.com" target="_blank" rel="noopener">platform.claude.com</a>). It is stored only in this browser and sent only to api.anthropic.com. Use a key with a spending limit; anyone with access to this browser profile could read it.</p>
-         <form class="verda-keyform"><input type="password" name="key" placeholder="${hasKey ? '•••••••• saved' : 'sk-ant-…'}" autocomplete="off"><button class="btn sm" type="submit">Save key</button>${hasKey ? '<button class="btn ghost sm" type="button" data-act="forget">Forget key</button>' : ''}</form>
+         <form class="sprout-keyform"><input type="password" name="key" placeholder="${hasKey ? '•••••••• saved' : 'sk-ant-…'}" autocomplete="off"><button class="btn sm" type="submit">Save key</button>${hasKey ? '<button class="btn ghost sm" type="button" data-act="forget">Forget key</button>' : ''}</form>
          <p class="small">Without a key, ${AGENT_NAME} runs a guided interview without AI. A site operator can instead start the node with <code>ANTHROPIC_API_KEY</code> so visitors need no key.</p>`;
-    box.querySelector('.verda-keyform')?.addEventListener('submit', (e) => {
+    box.querySelector('.sprout-keyform')?.addEventListener('submit', (e) => {
       e.preventDefault();
       const k = new FormData(e.target).get('key').trim();
       if (!/^sk-ant-[\w-]{20,}$/.test(k)) return toast('That does not look like an Anthropic API key (sk-ant-…).', 'err');
@@ -201,9 +201,9 @@ export function createVerda({ api, sendTx, render, toast, esc, status }) {
 
   function refreshMode() {
     const c = connection();
-    $('.verda-mode').innerHTML = `<span class="dot ${c.mode === 'guided' ? '' : 'live'}"></span>${esc(c.label)}${c.mode === 'guided' ? ' · <button type="button" class="linkish" data-act="connect">connect Claude</button>' : ''}`;
-    $('.verda-mode [data-act=connect]')?.addEventListener('click', () => toggleSettings(true));
-    const ls = $('.verda-lockstate');
+    $('.sprout-mode').innerHTML = `<span class="dot ${c.mode === 'guided' ? '' : 'live'}"></span>${esc(c.label)}${c.mode === 'guided' ? ' · <button type="button" class="linkish" data-act="connect">connect Claude</button>' : ''}`;
+    $('.sprout-mode [data-act=connect]')?.addEventListener('click', () => toggleSettings(true));
+    const ls = $('.sprout-lockstate');
     if (!project) return;
     if (project.status !== 'draft') {
       ls.innerHTML = `🔒 ${project.status === 'locked' ? 'Locked & submitted' : 'Retired'}: read-only`;
@@ -244,7 +244,7 @@ export function createVerda({ api, sendTx, render, toast, esc, status }) {
 
   function setBusy(v, text = `${AGENT_NAME} is thinking…`) {
     busy = v;
-    $('.verda-input button').disabled = v;
+    $('.sprout-input button').disabled = v;
     log.querySelector('.vb.typing')?.remove();
     if (v) {
       log.insertAdjacentHTML('beforeend', `<div class="vb assistant typing"><span></span><span></span><span></span> ${esc(text)}</div>`);
@@ -467,7 +467,7 @@ export function createVerda({ api, sendTx, render, toast, esc, status }) {
     isOpen = true;
     panel.hidden = false;
     root.classList.add('open');
-    document.body.classList.add('verda-docked');
+    document.body.classList.add('sprout-docked');
     refreshMode();
     redraw();
     const chat = chatFor();
@@ -481,13 +481,13 @@ export function createVerda({ api, sendTx, render, toast, esc, status }) {
     isOpen = false;
     panel.hidden = true;
     root.classList.remove('open');
-    document.body.classList.remove('verda-docked');
+    document.body.classList.remove('sprout-docked');
   }
 
   return {
     open,
     close,
-    /** Called after a project is created: its page opens with Verda starting the interview. */
+    /** Called after a project is created: its page opens with Sprout starting the interview. */
     welcome(id) {
       welcomeFor = id;
     },

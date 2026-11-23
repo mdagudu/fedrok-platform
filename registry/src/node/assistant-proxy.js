@@ -1,10 +1,10 @@
-// Claude API proxy for the Verda project assistant.
+// Claude API proxy for the Sprout project assistant.
 //
 // When a node runs with ANTHROPIC_API_KEY, browsers send their Messages API
 // requests to POST /api/assistant/v1/messages instead of api.anthropic.com,
 // so visitors never need their own key and the key never reaches a browser.
-// The proxy only forwards Verda-shaped requests: a fixed model, a capped
-// max_tokens, and only the tools Verda uses.
+// The proxy only forwards Sprout-shaped requests: a fixed model, a capped
+// max_tokens, and only the tools Sprout uses.
 import Anthropic from '@anthropic-ai/sdk';
 
 const MODEL = process.env.FEDROK_ASSISTANT_MODEL || 'claude-opus-5-5';
@@ -17,7 +17,7 @@ const MAX_PER_WINDOW = 30;
 export function createAssistantProxy({ log = console } = {}) {
   const client = new Anthropic(); // ANTHROPIC_API_KEY from the environment
   const hits = [];
-  log.info?.(`Verda assistant proxy enabled (${MODEL})`);
+  log.info?.(`Sprout assistant proxy enabled (${MODEL})`);
 
   return async function proxy(body) {
     const now = Date.now();

@@ -11,7 +11,7 @@ What is different from the main platform:
 | Carbon registry (credit batches, retirements, back-minting) | Removed |
 | Proof of Green consensus (Bitcoin anchor, green miners, Piggy Bank) | Removed. Blocks are produced by a small set of authority validators (Proof of Authority), held in the governance contract |
 | Carbon marketplace | Replaced by **Register your project / Propose a project**, starting from a dropdown of 19 environmental project types |
-| | New: **project pages**, built with **Verda**, an AI project guide powered by Claude |
+| | New: **project pages**, built with **Sprout**, an AI project guide powered by Claude |
 | | New: **Lock & submit**: a project becomes permanently read-only, enforced by the contract; the owner can still retire it |
 | Legacy Garden, explorer, wallet, stablecoin, developer page | Kept |
 
@@ -30,14 +30,14 @@ npm run devnet -- --reset   # 3 Fedrok validator nodes (Zurich, Geneva, Zug)
 npm run demo                # in a second terminal: demo projects and the Legacy Garden
 ```
 
-Open **http://127.0.0.1:8545**. To give Verda a Claude connection for every visitor, start the devnet with an API key in the environment (see below). Run the tests with `npm test`.
+Open **http://127.0.0.1:8545**. To give Sprout a Claude connection for every visitor, start the devnet with an API key in the environment (see below). Run the tests with `npm test`.
 
 ## How a project works
 
 1. **Register or propose.** On **Register a project**, choose *Register your project* (you run it) or *Propose a project* (an idea), pick the environmental project type from the dropdown, and give it a name. This creates a **draft** record on-chain, owned by your wallet.
-2. **Verda interviews you.** You land on the new project page and Verda opens by itself. It asks about the project one topic at a time (objectives, activities, location, beneficiaries, expected impact, monitoring, land tenure, partners, budget, risks, SDGs and more) and saves each answer to the project record as an on-chain revision.
-3. **Change it any time.** While the project is a draft, talk to Verda ("change the start date to March 2027", "add WWF Kenya as a partner") or use **Edit by hand**. Every change is a transaction in the project's public history.
-4. **Lock & submit.** When the record is complete, press **Lock & submit**. The ProjectRegistry contract stores a fingerprint of the final content and from then on rejects every change, from anyone: the owner, governance, and Verda (which signs with the owner's key). The page also stops offering Verda its edit tool.
+2. **Sprout interviews you.** You land on the new project page and Sprout opens by itself. It asks about the project one topic at a time (objectives, activities, location, beneficiaries, expected impact, monitoring, land tenure, partners, budget, risks, SDGs and more) and saves each answer to the project record as an on-chain revision.
+3. **Change it any time.** While the project is a draft, talk to Sprout ("change the start date to March 2027", "add WWF Kenya as a partner") or use **Edit by hand**. Every change is a transaction in the project's public history.
+4. **Lock & submit.** When the record is complete, press **Lock & submit**. The ProjectRegistry contract stores a fingerprint of the final content and from then on rejects every change, from anyone: the owner, governance, and Sprout (which signs with the owner's key). The page also stops offering Sprout its edit tool.
 5. **Retire.** A locked (or draft) project can still be retired with a public reason. Its content stays on the ledger unchanged.
 
 Rules enforced by `contracts/ProjectRegistry.sol`:
@@ -48,29 +48,29 @@ Rules enforced by `contracts/ProjectRegistry.sol`:
 - `lockAndSubmit` needs a summary and details, and the fingerprint of the content the owner reviewed, so nobody can slip in a change between review and lock.
 - `retire` needs a reason and works once.
 
-## Verda, the AI project guide
+## Sprout, the AI project guide
 
-Verda runs in the browser on each project page (`web/verda.js`) and calls the Claude API (`claude-opus-5-5`) with two tools of its own:
+Sprout runs in the browser on each project page (`web/sprout.js`) and calls the Claude API (`claude-opus-5-5`) with two tools of its own:
 
 | Tool | What it does |
 |---|---|
 | `get_project` | Reads the current on-chain record and the fields that are still empty |
 | `update_project` | Saves changes as one `project_update` transaction signed by the owner's wallet. Offered only while the project is a draft and the owner's wallet is active |
 
-Verda has no lock or retire tool: those are buttons for the owner. It can also read pages on **fedrok.com** with Claude's web fetch tool (restricted to that domain) to answer questions about Fedrok, and the panel links to the site.
+Sprout has no lock or retire tool: those are buttons for the owner. It can also read pages on **fedrok.com** with Claude's web fetch tool (restricted to that domain) to answer questions about Fedrok, and the panel links to the site.
 
-### Connecting Verda to Claude
+### Connecting Sprout to Claude
 
-Verda picks the first connection that is available:
+Sprout picks the first connection that is available:
 
-1. **Node proxy (recommended for a shared site).** Start the node with `ANTHROPIC_API_KEY` set, e.g. `ANTHROPIC_API_KEY=sk-ant-... npm run devnet -- --reset`. The node then serves `POST /api/assistant/v1/messages` and forwards Verda's requests to Claude with a fixed model, a token cap, a tool allowlist and a simple rate limit. Visitors need no key, and the key never reaches a browser.
-2. **Your own API key.** On a static host (such as the GitHub Pages preview) there is no server to hold a key. Open Verda's settings (gear icon) and paste an Anthropic API key. It is stored only in that browser and sent only to `api.anthropic.com`. Use a key with a spending limit.
-3. **Guided mode.** With neither, Verda still runs a scripted interview without AI, and still saves every answer on-chain, so the demo works offline.
+1. **Node proxy (recommended for a shared site).** Start the node with `ANTHROPIC_API_KEY` set, e.g. `ANTHROPIC_API_KEY=sk-ant-... npm run devnet -- --reset`. The node then serves `POST /api/assistant/v1/messages` and forwards Sprout's requests to Claude with a fixed model, a token cap, a tool allowlist and a simple rate limit. Visitors need no key, and the key never reaches a browser.
+2. **Your own API key.** On a static host (such as the GitHub Pages preview) there is no server to hold a key. Open Sprout's settings (gear icon) and paste an Anthropic API key. It is stored only in that browser and sent only to `api.anthropic.com`. Use a key with a spending limit.
+3. **Guided mode.** With neither, Sprout still runs a scripted interview without AI, and still saves every answer on-chain, so the demo works offline.
 
 ## Architecture
 
 ```
- Web app + Verda ──REST, JSON-RPC──▶ Fedrok node
+ Web app + Sprout ──REST, JSON-RPC──▶ Fedrok node
         │                             ├─ Proof of Authority: validator set from FedrokGovernance,
         │                             │  one slot leader per block time, P2P gossip and sync
         │                             ├─ EVM execution (ethereumjs, Shanghai rules, EIP-1559 fees)

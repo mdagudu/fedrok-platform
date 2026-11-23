@@ -6,7 +6,7 @@
 //     --key=devnet/keys/validator-1.key
 //
 // With ANTHROPIC_API_KEY set, the node also serves POST /api/assistant, a
-// proxy to the Claude API for the Verda project assistant, so browsers using
+// proxy to the Claude API for the Sprout project assistant, so browsers using
 // this node never need their own key.
 import fs from 'node:fs';
 import { Chain } from './evm/chain.js';

@@ -1,5 +1,5 @@
 // The structured details a Fedrok project page records. Shared by the web
-// app (project page, editor), the Verda assistant (interview and edit tools)
+// app (project page, editor), the Sprout assistant (interview and edit tools)
 // and the demo data. Stored on-chain as a JSON object (ProjectRegistry.details).
 export const DETAIL_FIELDS = [
   { key: 'objectives', label: 'Objectives', hint: 'What the project sets out to achieve, in two or three sentences.', long: true },
