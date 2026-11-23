@@ -51,7 +51,7 @@ async function main() {
   if (reset && fs.existsSync(DIR)) fs.rmSync(DIR, { recursive: true });
   fs.mkdirSync(path.join(DIR, 'keys'), { recursive: true });
 
-  run('btc-sim', ['src/btc/simulator.js', `--port=${BTC_PORT}`, `--state=${path.join(DIR, 'btc-sim.json')}`, '--block-ms=4000']);
+  run('btc-sim', ['src/btc/simulator.js', `--port=${BTC_PORT}`, `--state=${path.join(DIR, 'btc-sim.json')}`, '--block-ms=10000']);
   const btcGenesis = (await waitFor(`http://127.0.0.1:${BTC_PORT}/headers?from=0&limit=1`))[0];
 
   const genesisFile = path.join(DIR, 'genesis.json');

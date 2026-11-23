@@ -1,161 +1,179 @@
-// Core protocol tests: state transitions, Proof of Green and block validation.
+// Protocol tests on the EVM: system contracts, Proof of Green block
+// production and block validation. Every block is re-executed by an
+// independent validator node (see helpers.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generatePrivateKey, addressFromPrivate, publicKeyOf, btcSimAddressOf, signDigest, btcLinkMessage, sha256Hex } from '../src/core/crypto.js';
-import { signTx } from '../src/core/transaction.js';
-import { createGenesisState, cloneState, peekAccount } from '../src/core/state.js';
-import { buildBlock, applyBlock, btcHeaderHash, meetsDifficulty, schedule } from '../src/core/consensus.js';
+import { generatePrivateKey, publicKeyOf, btcSimAddressOf, signRecoverable, signDigest, btcLinkMessage } from '../src/core/crypto.js';
 import { fdk, stable, tonnesToKg } from '../src/core/units.js';
+import { ADDRESSES } from '../src/evm/contracts.js';
+import { stripBlock } from '../src/evm/chain.js';
+import { schedule } from '../src/node/api-core.js';
+import { setup, rejects } from './helpers.js';
 
-const DIFF = 1;
-function mineHeader(prev, minerAddress) {
-  for (let nonce = 0; ; nonce++) {
-    const h = { height: prev.height + 1, prevHash: prev.hash, time: Date.now(), nonce, minerAddress, merkle: sha256Hex(String(prev.height)) };
-    const hash = btcHeaderHash(h);
-    if (meetsDifficulty(hash, DIFF)) return { ...h, hash };
-  }
-}
+const credit = (serial, extra = {}) => ({ project: 'P', country: 'PG', registry: 'Verra VCS', methodology: 'VM0047', vintage: 2024, serial, quantityKg: tonnesToKg('100').toString(), ...extra });
 
-function setup() {
-  const k = Object.fromEntries(['gov', 'auditor', 'issuer', 'fallback', 'alice', 'bob', 'gen', 'owner'].map((n) => [n, generatePrivateKey()]));
-  const A = Object.fromEntries(Object.entries(k).map(([n, v]) => [n, addressFromPrivate(v)]));
-  const btc0 = { height: 0, prevHash: '0x' + '0'.repeat(64), time: 0, nonce: 0, minerAddress: 'genesis', merkle: '0x00' };
-  btc0.hash = btcHeaderHash(btc0);
-  const genesis = {
-    chainId: 'fedrok-test', timestamp: 1_700_000_000_000, admin: A.gov, stableIssuer: A.issuer,
-    stable: { symbol: 'fUSD', name: 'test', decimals: 6 }, fallbackValidator: A.fallback,
-    btc: { anchorHeight: 0, anchorHash: btc0.hash, difficulty: DIFF },
-    params: { blockTimeMs: 1000, minFee: fdk('0.001').toString(), minGeneratorStake: fdk('100').toString(), fdkPerUnitYear: fdk('23').toString(), greenWindow: 3, maxGeneratorsPerMiner: 21, marketFeeBps: 50, maxTxPerBlock: 500 },
-    auditors: [{ address: A.auditor, name: 'Test auditor' }],
-    alloc: ['gov', 'auditor', 'issuer', 'alice', 'bob', 'gen', 'owner'].map((n) => ({ address: A[n], fdk: fdk('1000').toString() })),
-  };
-  const chain = { k, A, genesis, producer: createGenesisState(genesis), validator: createGenesisState(genesis), nonces: {}, t: genesis.timestamp, btcTip: btc0 };
-  chain.tx = (who, type, payload) => {
-    chain.nonces[who] = chain.nonces[who] ?? 0;
-    return signTx({ chainId: 'fedrok-test', type, nonce: chain.nonces[who]++, fee: fdk('0.001').toString(), payload }, k[who]);
-  };
-  chain.block = (txs, { btcHeaders = [], key } = {}) => {
-    chain.t += 1000;
-    const sched = (() => { const s = cloneState(chain.producer); return s; })();
-    const signer = key || k.fallback;
-    const built = buildBlock(chain.producer, { timestamp: chain.t, btcHeaders, txs, privKey: signer });
-    applyBlock(chain.validator, built.block); // independent validation
-    assert.equal(chain.validator.tipHash, chain.producer.tipHash);
-    return built;
-  };
-  return chain;
-}
-
-test('stablecoin settles marketplace trades; FDK only pays fees', () => {
-  const c = setup();
+test('stablecoin settles marketplace trades; FDK only pays gas', async () => {
+  const c = await setup();
   const { A } = c;
-  c.block([c.tx('issuer', 'stable_mint', { to: A.bob, amount: stable('10000').toString(), reserveRef: 'att-1' })]);
-  const issued = c.block([c.tx('auditor', 'credit_issue', { to: A.alice, project: 'P', country: 'PG', registry: 'Verra VCS', methodology: 'VM0047', vintage: 2024, serial: 'S-1', quantityKg: tonnesToKg('100').toString() })]);
-  assert.equal(issued.rejected.length, 0);
-  const batchId = issued.receipts[0].events[0].batchId;
-  c.block([c.tx('alice', 'market_list', { batchId, quantityKg: tonnesToKg('50').toString(), pricePerTonne: stable('20').toString() })]);
-  const buy = c.block([c.tx('bob', 'market_buy', { listingId: 'LST-000001', quantityKg: tonnesToKg('10').toString() })]);
-  assert.equal(buy.rejected.length, 0, JSON.stringify(buy.rejected));
-  const s = c.validator;
-  assert.equal(peekAccount(s, A.bob).stable, stable('9800'));
-  assert.equal(peekAccount(s, A.alice).stable, stable('199')); // 200 minus 0.5% fee
-  assert.equal(peekAccount(s, A.gov).stable, stable('1'));
-  assert.equal(peekAccount(s, A.bob).credits[batchId], tonnesToKg('10'));
-  // Bob's FDK only decreased by the network fee.
-  assert.equal(peekAccount(s, A.bob).fdk, fdk('1000') - fdk('0.001'));
+  await c.do('issuer', 'stable_mint', { to: A.bob, amount: stable('10000').toString(), reserveRef: 'att-1' });
+  const issued = await c.do('auditor', 'credit_issue', credit('S-1', { to: A.alice }));
+  const batchId = issued.events[0].batchId;
+  assert.equal(batchId, 'CCB-000001');
+  await c.do('alice', 'market_list', { batchId, quantityKg: tonnesToKg('50').toString(), pricePerTonne: stable('20').toString() });
+  await c.approve('bob', 'CarbonMarketplace');
+  await c.block();
+  const fdkBefore = c.state().accounts[A.bob].fdk;
+  const buy = await c.do('bob', 'market_buy', { listingId: 'LST-000001', quantityKg: tonnesToKg('10').toString() });
+  assert.equal(buy.status, 'ok');
+  const s = c.validator.state;
+  assert.equal(s.accounts[A.bob].stable, stable('9800'));
+  assert.equal(s.accounts[A.alice].stable, stable('199')); // 200 minus 0.5% platform fee
+  assert.equal(s.accounts[A.gov].stable, stable('1'));
+  assert.equal(s.accounts[A.bob].credits[batchId], tonnesToKg('10'));
+  assert.equal(s.listings['LST-000001'].remainingKg, tonnesToKg('40'));
+  // Bob's FDK only decreased by gas, which is tiny.
+  const gas = fdkBefore - s.accounts[A.bob].fdk;
+  assert.ok(gas > 0n && gas < fdk('0.01'), `gas paid ${gas}`);
+  assert.equal(BigInt(buy.fee), gas);
 });
 
-test('buying without stablecoin fails even with plenty of FDK', () => {
-  const c = setup();
-  const { A } = c;
-  const issued = c.block([c.tx('auditor', 'credit_issue', { to: A.alice, project: 'P', country: 'PG', registry: 'Verra VCS', methodology: 'm', vintage: 2024, serial: 'S-2', quantityKg: '5000' })]);
-  c.block([c.tx('alice', 'market_list', { batchId: issued.receipts[0].events[0].batchId, quantityKg: '5000', pricePerTonne: stable('10').toString() })]);
-  const r = c.block([c.tx('bob', 'market_buy', { listingId: 'LST-000001', quantityKg: '1000' })]);
-  assert.equal(r.rejected.length, 1);
-  assert.match(r.rejected[0].error, /insufficient fUSD/);
+test('buying without stablecoin fails even with plenty of FDK', async () => {
+  const c = await setup();
+  await c.do('auditor', 'credit_issue', credit('S-2', { to: c.A.alice, quantityKg: '5000' }));
+  await c.do('alice', 'market_list', { batchId: 'CCB-000001', quantityKg: '5000', pricePerTonne: stable('10').toString() });
+  await c.approve('bob', 'CarbonMarketplace');
+  await c.block();
+  await rejects(c.send('bob', 'market_buy', { listingId: 'LST-000001', quantityKg: '1000' }), /insufficient fUSD/);
 });
 
-test('a registry serial can only be tokenised once', () => {
-  const c = setup();
-  const p = { project: 'P', country: 'KE', registry: 'Gold Standard', methodology: 'm', vintage: 2025, serial: 'GS-1', quantityKg: '1000' };
-  c.block([c.tx('auditor', 'credit_issue', p)]);
-  const r = c.block([c.tx('auditor', 'credit_issue', p)]);
-  assert.match(r.rejected[0].error, /double counting/);
+test('a registry serial can only be tokenised once', async () => {
+  const c = await setup();
+  await c.do('auditor', 'credit_issue', credit('GS-1', { registry: 'Gold Standard' }));
+  await rejects(c.send('auditor', 'credit_issue', credit('GS-1', { registry: 'Gold Standard' })), /double counting/);
 });
 
-test('only auditors issue credits; retirement burns and records', () => {
-  const c = setup();
-  const r1 = c.block([c.tx('alice', 'credit_issue', { project: 'x', country: 'x', registry: 'x', methodology: 'x', vintage: 2024, serial: 'x', quantityKg: '1' })]);
-  assert.match(r1.rejected[0].error, /auditor/);
-  const r2 = c.block([c.tx('auditor', 'credit_issue', { project: 'x', country: 'x', registry: 'x', methodology: 'x', vintage: 2024, serial: 'y', quantityKg: '3000' })]);
-  const batchId = r2.receipts[0].events[0].batchId;
-  c.block([c.tx('auditor', 'credit_retire', { batchId, quantityKg: '1000', beneficiary: 'Fedrok AG', reason: 'test' })]);
-  assert.equal(c.validator.batches[batchId].retiredKg, 1000n);
-  assert.equal(c.validator.retirements['RET-000001'].beneficiary, 'Fedrok AG');
-  assert.equal(c.validator.supply.creditsRetired, 1000n);
+test('only auditors issue credits; retirement burns and records', async () => {
+  const c = await setup();
+  await rejects(c.send('alice', 'credit_issue', credit('x')), /only an accredited auditor/);
+  const r = await c.do('auditor', 'credit_issue', credit('y', { quantityKg: '3000' }));
+  const batchId = r.events[0].batchId;
+  const ret = await c.do('auditor', 'credit_retire', { batchId, quantityKg: '1000', beneficiary: 'Fedrok AG', reason: 'test' });
+  assert.equal(ret.events[0].retirementId, 'RET-000001');
+  const s = c.validator.state;
+  assert.equal(s.batches[batchId].retiredKg, 1000n);
+  assert.equal(s.retirements['RET-000001'].beneficiary, 'Fedrok AG');
+  assert.equal(s.supply.creditsRetired, 1000n);
+  assert.equal(s.accounts[c.A.auditor].credits[batchId], 2000n);
+  // The contract agrees with the indexer.
+  assert.equal(await c.producer.view('CarbonRegistry', 'balanceOf', [1, c.A.auditor]), 2000n);
 });
 
-test('Proof of Green: accredited miner block switches production to its generators, with rewards', () => {
-  const c = setup();
+test('back-minting locks credits and issues 1 FDK per tonne from the capped reserve', async () => {
+  const c = await setup();
+  await c.do('auditor', 'credit_issue', credit('R-1', { quantityKg: tonnesToKg('20').toString() }));
+  const before = c.state().supply.fdkMinted;
+  const r = await c.do('auditor', 'fdk_back_mint', { batchId: 'CCB-000001', quantityKg: tonnesToKg('20').toString(), to: c.A.alice });
+  assert.equal(r.events[0].amount, fdk('20'));
+  const s = c.validator.state;
+  assert.equal(s.supply.fdkMinted - before, fdk('20'));
+  assert.equal(s.backingVault['CCB-000001'], tonnesToKg('20'));
+  assert.equal(s.accounts[c.A.alice].fdk, fdk('1020'));
+  await rejects(c.send('alice', 'fdk_back_mint', { batchId: 'CCB-000001', quantityKg: '1' }), /only an accredited auditor/);
+});
+
+test('Proof of Green: accredited miner block switches production to its generators, with rewards', async () => {
+  const c = await setup();
   const { A, k } = c;
   const btcKey = generatePrivateKey();
   const btcPub = publicKeyOf(btcKey);
   const btcAddress = btcSimAddressOf(btcPub);
-  const btcSig = signDigest(btcLinkMessage(btcAddress, A.owner, 'fedrok-test'), btcKey);
-  const acc = c.block([c.tx('auditor', 'miner_accredit', { btcAddress, btcPubKey: btcPub, btcSig, owner: A.owner, units: 10, auditDays: 365, publicGenerators: true, generatorShareBps: 2000 })]);
-  assert.equal(acc.rejected.length, 0, JSON.stringify(acc.rejected));
-  const minerId = acc.receipts[0].events[0].minerId;
-  assert.equal(c.validator.piggyBank, fdk('230'));
-  c.block([c.tx('gen', 'generator_register', { stake: fdk('100').toString() }), c.tx('gen', 'generator_link', { minerId })]);
-  assert.equal(schedule(c.validator).mode, 'fallback');
+  const btcSig = signRecoverable(btcLinkMessage(btcAddress, A.owner, c.genesis.chainId, ADDRESSES.ProofOfGreen), btcKey);
+  const acc = await c.do('auditor', 'miner_accredit', { btcAddress, btcPubKey: btcPub, btcSig, owner: A.owner, units: 10, auditDays: 365, publicGenerators: true, generatorShareBps: 2000 });
+  const minerId = acc.events[0].minerId;
+  assert.match(minerId, /^MNR-[0-9A-F]{8}$/);
+  assert.equal(c.validator.state.miners[minerId].btcAddress, btcAddress, 'the contract derived the same Bitcoin address');
+  assert.equal(c.validator.state.piggyBank, fdk('230'));
+  await c.send('gen', 'generator_register', { stake: fdk('100').toString(), name: 'G' });
+  await c.send('gen', 'generator_link', { minerId });
+  await c.block();
+  assert.equal(schedule(c.validator.state).mode, 'fallback');
 
-  // An accredited miner wins a Bitcoin block -> green mode, generator must sign.
-  const h1 = mineHeader(c.btcTip, btcAddress);
-  c.btcTip = h1;
-  assert.throws(() => buildBlock(cloneState(c.producer), { timestamp: c.t + 1000, btcHeaders: [h1], txs: [], privKey: k.fallback }), /not this generator's slot/);
-  const ownerBefore = peekAccount(c.validator, A.owner).fdk;
-  const b = c.block([], { btcHeaders: [h1], key: k.gen });
-  assert.equal(b.block.header.mode, 'green');
-  assert.equal(b.block.header.activeMiner, minerId);
-  assert.ok(BigInt(b.block.header.reward) > 0n);
-  assert.ok(peekAccount(c.validator, A.owner).fdk > ownerBefore);
+  // An accredited miner wins a Bitcoin block -> green mode: only its generator may produce.
+  const h1 = c.btc(btcAddress);
+  assert.equal(await c.producer.produce({ timestamp: c.t + 1000, btcHeaders: [h1], privKey: k.fallback }), null, 'fallback validator lost its slot');
+  const ownerBefore = c.validator.state.accounts[A.owner].fdk;
+  const b = await c.block({ btcHeaders: [h1], key: k.gen });
+  assert.equal(b.header.mode, 'green');
+  assert.equal(b.header.activeMiner, minerId);
+  assert.ok(BigInt(b.header.reward) > 0n);
+  assert.ok(c.validator.state.accounts[A.owner].fdk > ownerBefore, 'miner owner received its share');
+  assert.equal(c.validator.state.miners[minerId].greenBlocks, 1);
 
   // No green blocks for greenWindow Bitcoin blocks -> fallback validator resumes.
-  const hs = [];
-  let tip = c.btcTip;
-  for (let i = 0; i < 3; i++) hs.push((tip = mineHeader(tip, 'bcsim1dirty')));
-  c.btcTip = tip;
-  const fb = c.block([], { btcHeaders: hs, key: k.fallback });
-  assert.equal(fb.block.header.mode, 'fallback');
+  const hs = [c.btc('bcsim1dirty'), c.btc('bcsim1dirty'), c.btc('bcsim1dirty')];
+  const fb = await c.block({ btcHeaders: hs, key: k.fallback });
+  assert.equal(fb.header.mode, 'fallback');
+  assert.equal(c.validator.state.pog.anchorHeight, 4);
 });
 
-test('forged Bitcoin ownership proof is rejected', () => {
-  const c = setup();
+test('forged Bitcoin ownership proof is rejected on-chain', async () => {
+  const c = await setup();
   const btcKey = generatePrivateKey();
   const btcPub = publicKeyOf(btcKey);
   const btcAddress = btcSimAddressOf(btcPub);
-  const btcSig = signDigest(btcLinkMessage(btcAddress, c.A.alice, 'fedrok-test'), btcKey); // signed for alice
-  const r = c.block([c.tx('auditor', 'miner_accredit', { btcAddress, btcPubKey: btcPub, btcSig, owner: c.A.owner, units: 1 })]);
-  assert.match(r.rejected[0].error, /ownership proof/);
+  const btcSig = signRecoverable(btcLinkMessage(btcAddress, c.A.alice, c.genesis.chainId, ADDRESSES.ProofOfGreen), btcKey); // signed for alice
+  await rejects(c.send('auditor', 'miner_accredit', { btcAddress, btcPubKey: btcPub, btcSig, owner: c.A.owner, units: 1 }), /ownership proof/);
 });
 
-test('tampered blocks and transactions are rejected by validators', () => {
-  const c = setup();
-  const good = buildBlock(cloneState(c.producer), { timestamp: c.t + 1000, btcHeaders: [], txs: [c.tx('alice', 'transfer', { to: c.A.bob, asset: 'FDK', amount: '1' })], privKey: c.k.fallback }).block;
+test('forged Bitcoin headers are rejected by every node', async () => {
+  const c = await setup();
+  const h = c.btc('bcsim1x');
+  const bad = { ...h, nonce: h.nonce + 1 };
+  await rejects(c.producer.produce({ timestamp: c.t + 1000, btcHeaders: [bad], privKey: c.k.fallback }), /hash mismatch/);
+});
+
+test('tampered blocks and transactions are rejected by validators', async () => {
+  const c = await setup();
+  await c.send('alice', 'transfer', { to: c.A.bob, asset: 'FDK', amount: '1' });
+  const good = stripBlock(await c.producer.produce({ timestamp: c.t + 1000, btcHeaders: [], privKey: c.k.fallback }));
   const forged = structuredClone(good);
-  forged.txs[0].payload.amount = '999';
-  assert.throws(() => applyBlock(cloneState(c.validator), forged), /txRoot|signature|hash/);
-  const wrongSigner = buildBlock(cloneState(c.producer), { timestamp: c.t + 1000, btcHeaders: [], txs: [], privKey: c.k.fallback }).block;
+  forged.txs[0].raw = forged.txs[0].raw.slice(0, -2) + (forged.txs[0].raw.endsWith('00') ? '01' : '00');
+  await rejects(c.validator.addBlock(forged), /txRoot|signature|invalid/);
+  const wrongSigner = structuredClone(good);
   wrongSigner.sig = signDigest(wrongSigner.hash, c.k.alice);
-  assert.throws(() => applyBlock(cloneState(c.validator), wrongSigner), /signature/);
-  applyBlock(cloneState(c.validator), good); // the untouched block is fine
+  await rejects(c.validator.addBlock(wrongSigner), /signature/);
+  const wrongRoot = structuredClone(good);
+  wrongRoot.header.stateRoot = '0x' + '1'.repeat(64);
+  await rejects(c.validator.addBlock(wrongRoot), /hash mismatch/);
+  await c.validator.addBlock(good); // the untouched block is fine
+  assert.equal(c.validator.state.tipHash, c.producer.state.tipHash);
 });
 
-test('governance-only actions are enforced', () => {
-  const c = setup();
-  const r = c.block([c.tx('alice', 'gov_add_auditor', { auditor: c.A.alice, name: 'me' }), c.tx('alice', 'stable_mint', { to: c.A.alice, amount: '1', reserveRef: 'x' })]);
-  assert.equal(r.rejected.length, 2);
-  const ok = c.block([c.tx('gov', 'gov_set_param', { key: 'greenWindow', value: 9 })]);
-  assert.equal(ok.rejected.length, 0);
-  assert.equal(c.validator.params.greenWindow, 9);
+test('governance-only actions are enforced', async () => {
+  const c = await setup();
+  await rejects(c.send('alice', 'gov_add_auditor', { auditor: c.A.alice, name: 'me' }), /governance only/);
+  await rejects(c.send('alice', 'stable_mint', { to: c.A.alice, amount: '1', reserveRef: 'x' }), /only the stablecoin issuer/);
+  const ok = await c.do('gov', 'gov_set_param', { key: 'greenWindow', value: 9 });
+  assert.equal(ok.status, 'ok');
+  assert.equal(c.validator.state.params.greenWindow, 9);
+  await rejects(c.send('gov', 'gov_set_param', { key: 'greenWindow', value: 0 }), /invalid value/);
+});
+
+test('standard Ethereum JSON-RPC works against the node', async () => {
+  const c = await setup();
+  const { EthRpc } = await import('../src/node/eth-rpc.js');
+  const rpc = new EthRpc(c.producer);
+  assert.equal(await rpc.call('eth_chainId'), '0x' + (7799).toString(16));
+  const hash = await c.send('alice', 'transfer', { to: c.A.bob, asset: 'FDK', amount: fdk('1').toString() });
+  await c.block();
+  const rcpt = await rpc.call('eth_getTransactionReceipt', [hash]);
+  assert.equal(rcpt.status, '0x1');
+  assert.equal(rcpt.gasUsed, '0x5208'); // 21000
+  assert.equal(BigInt(await rpc.call('eth_getBalance', [c.A.bob])), fdk('1001'));
+  const block = await rpc.call('eth_getBlockByNumber', ['latest', true]);
+  assert.equal(block.transactions[0].hash, hash);
+  // eth_call into a system contract
+  const { IFACE } = await import('../src/evm/contracts.js');
+  const out = await rpc.call('eth_call', [{ to: ADDRESSES.FedrokGovernance, data: IFACE.FedrokGovernance.encodeFunctionData('admin') }]);
+  assert.equal(IFACE.FedrokGovernance.decodeFunctionResult('admin', out)[0].toLowerCase(), c.A.gov);
 });

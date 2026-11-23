@@ -4,8 +4,10 @@
 //   paid subscriptions fill planting batch 1 (50 trees) -> it is released and
 //   planted in compartment A -> monitoring at months 1, 3 and 6 -> two trees
 //   die and are replaced free under the 24-month guarantee -> batch 2 does not
-//   fill before the window closes and carries over -> a self-service
-//   dedication is paid in the settlement stablecoin.
+//   fill before the window closes and carries over, then fills and is planted
+//   in compartment B -> batch 3 starts filling -> a self-service dedication is
+//   paid in the settlement stablecoin. 120 subscriptions in total, so the pilot
+//   is past its target of 100.
 //
 // Names below are fictional sample data.
 import { addressFromPrivate, generatePrivateKey, sha256Hex, canonical } from './crypto.js';
@@ -147,15 +149,37 @@ export async function runGardenScenario(c, K, log = console.log) {
   await all(after.filter(([, d]) => d <= new Date().toISOString().slice(0, 10)).map(([id, date, h, st, note], k) => () => c.send(K.steward, 'tree_monitor', { treeId: id, date, heightCm: h, stemMm: st, crown: 'good', health: 'healthy', photoHash: photo(id, 'monitor', 'r', k), note })));
   ok(`${m1.length + m3.length + m6.length + after.length} inspections recorded; 2 trees died and were replaced free under the 24-month guarantee`);
 
-  // ---- batch 2 carries over
+  // ---- batch 2: carries over, then fills in the next window and is planted
   step('Batch 2 does not reach 50 before the planting window closes: payments carry over');
-  const batch2 = Array.from({ length: 12 }, (_, i) => anon(100 + i));
-  await all(batch2.map((d, i) => dedTx(d, addDays('2026-05-20', i * 5))));
+  const batch2 = Array.from({ length: 50 }, (_, i) => anon(100 + i));
+  await all(batch2.slice(0, 12).map((d, i) => dedTx(d, addDays('2026-05-20', i * 5))));
   const closed = await c.sendAndWait(K.gardenOp, 'planting_window_close', { gardenId: GARDEN_ID, nextWindow: 'Minor rainy season 2026 (Sep–Nov)' });
   const ev = closed.events[0];
   ok(`${ev.from} closed with ${ev.carriedOver} of 50 paid; carried over to ${ev.to} for the next window`);
-  const more = Array.from({ length: 8 }, (_, i) => anon(200 + i));
-  await all(more.map((d, i) => dedTx(d, addDays('2026-08-10', i * 9))));
+  const r2 = await all(batch2.slice(12).map((d, i) => dedTx(d, addDays('2026-07-06', i))));
+  const released2 = r2.flatMap((r) => r.events).find((e) => e.event === 'BatchReleased');
+  ok(`38 more subscriptions fill ${released2.batchId}: released for planting`);
+
+  step('Stewards plant batch 2 in compartment B');
+  const ded2 = (await c.get(`/api/garden-batch/${released2.batchId}`)).dedications;
+  const plantDate2 = (i) => addDays('2026-09-21', Math.floor(i / 4));
+  const trees2 = ded2.map((d, i) => ({ id: `${GARDEN_ID}-2026-B-${String(i + 1).padStart(3, '0')}`, planted: plantDate2(i), i: 100 + i, d }));
+  await all(trees2.map((t, i) => () => {
+    const [sp, sci] = SPECIES[(i * 5 + 2) % SPECIES.length];
+    return c.send(K.steward, 'tree_plant', { dedicationId: t.d.id, treeId: t.id, species: sp, scientific: sci, gps: positionGps(1, i + 1), plantedOn: t.planted, seedSource: SEED[(i + 1) % 3], photoHash: photo(t.id, 'planting', 1) });
+  }));
+  const today = new Date().toISOString().slice(0, 10);
+  const b2m1 = trees2.filter((t) => addDays(t.planted, 30) <= today).map((t) => mon(t, 30, 42 + Math.round(rnd(t.i, 'h1') * 25), 6 + Math.round(rnd(t.i, 's1') * 3)));
+  await all(b2m1);
+  ok(`${trees2.length} trees planted in compartment B; ${b2m1.length} month-1 inspections recorded`);
+
+  await c.sendAndWait(K.gardenOp, 'planting_window_close', { gardenId: GARDEN_ID, nextWindow: 'Major rainy season 2027 (Apr–Jul)' });
+  ok('Minor rainy season planting complete; next window: major rainy season 2027');
+
+  step('New subscriptions start planting batch 3');
+  const batch3 = Array.from({ length: 19 }, (_, i) => anon(200 + i));
+  await all(batch3.map((d, i) => dedTx(d, addDays('2026-10-01', i * 2))));
+  ok(`${batch3.length} paid subscriptions waiting for the next planting window`);
 
   step('Self-service dedication paid in the settlement stablecoin');
   const st = await c.status();

@@ -1,9 +1,9 @@
 // Fedrok Network web app: explorer, wallet, marketplace, registry,
 // Proof of Green monitor, governance/auditor console and developer docs.
-// Vanilla ES modules; transactions are signed in the browser with the same
-// core modules the node uses.
+// Vanilla ES modules. Every action is an ordinary EIP-1559 Ethereum
+// transaction to a Fedrok system contract, signed in the browser.
 import { FedrokClient } from '/core/client.js';
-import { generatePrivateKey, addressFromPrivate, isAddress, signDigest, btcLinkMessage, sha256Hex } from '/core/crypto.js';
+import { generatePrivateKey, addressFromPrivate, isAddress, signRecoverable, btcLinkMessage, sha256Hex } from '/core/crypto.js';
 import { qrSvg } from './qr.js';
 import { formatFdk, formatStable, formatTonnes, fdk, stable, tonnesToKg, parseUnits } from '/core/units.js';
 
@@ -88,6 +88,7 @@ const TX_LABEL = {
   gov_add_auditor: 'Auditor added', gov_remove_auditor: 'Auditor removed', gov_set_fallback: 'Fallback validator set', gov_set_param: 'Parameter change', gov_set_stable_issuer: 'Stablecoin issuer set',
   garden_register: 'Garden registered', garden_steward: 'Garden steward', dedication_create: 'Tree dedication', planting_window_close: 'Planting window closed',
   tree_plant: 'Tree planted', tree_monitor: 'Tree inspection', tree_replace: 'Tree replaced', maintenance_renew: 'Maintenance renewal',
+  stable_approve: 'Stablecoin approval', evm_call: 'Contract call', contract_deploy: 'Contract deployment',
 };
 const txPill = (t) => `<span class="pill ${t.startsWith('market') || t.startsWith('stable') ? 'grad' : t.startsWith('credit') || t === 'fdk_back_mint' || t.startsWith('tree') || t.startsWith('garden') || t === 'dedication_create' || t === 'planting_window_close' || t === 'maintenance_renew' ? 'green' : 'grey'}">${esc(TX_LABEL[t] || t)}</span>`;
 const modePill = (m) => (m === 'green' ? '<span class="pill green"><span class="d"></span>Green</span>' : '<span class="pill warn"><span class="d"></span>Fallback</span>');
@@ -187,9 +188,9 @@ async function viewOverview() {
   return `${banner}
   <section class="hero">
     <div class="ring"></div><div class="disc"></div>
-    <div class="eyebrow" style="color:var(--sandy)">Fedrok Layer 1 · ${esc(s.chainId)}</div>
+    <div class="eyebrow" style="color:var(--sandy)">Fedrok EVM Layer 1 · chain ${esc(s.chainId)} · ${esc(s.network)}</div>
     <h1>Changing the world, one small project at a time.</h1>
-    <p>Tokenised carbon credits with real-time verification. Blocks are produced by accredited green Bitcoin miners under Proof of Green, and every purchase settles in ${esc(SYM())} stablecoin.</p>
+    <p>An EVM-compatible blockchain for environmental asset records: authorised registries issue, transfer and retire verified credits through Solidity contracts. Blocks are produced under Proof of Green, and every purchase settles in ${esc(SYM())} stablecoin.</p>
     <div class="mode">${sched.mode === 'green' ? icon('leaf') : icon('shield')} <span>${sched.mode === 'green' ? `Green mode · active miner <a style="color:#fff;text-decoration:underline" href="#/miner/${sched.miner}">${esc(sched.miner)}</a>` : 'Fallback validator producing blocks until a green miner wins a Bitcoin block'}</span></div>
   </section>
   <div class="grid g4">
@@ -206,7 +207,7 @@ async function viewOverview() {
   </div>
   <div class="grid g2 section">
     <div class="card"><h2>Latest blocks <a class="aside" href="#/explorer">View all</a></h2>
-      <div class="feed">${blocks.map((b) => `<div class="feed-item"><div class="blockbadge ${b.mode === 'green' ? 'g' : ''}">${b.height}</div><div><div>${modePill(b.mode)} <span class="small muted">by</span> ${addrLink(b.generator)}</div><div class="small muted">${b.txCount} tx · reward ${F(b.reward, 4)} FDK · BTC anchor #${b.btcAnchor.height}</div></div><div class="small muted">${ago(b.timestamp)}</div></div>`).join('') || '<div class="empty">Waiting for the first block…</div>'}</div>
+      <div class="feed">${blocks.map((b) => `<div class="feed-item"><div class="blockbadge ${b.mode === 'green' ? 'g' : ''}">${b.height}</div><div><div>${modePill(b.mode)} <span class="small muted">by</span> ${addrLink(b.generator)}</div><div class="small muted">${b.txCount} tx · ${Number(b.gasUsed || 0).toLocaleString('en-GB')} gas · BTC anchor #${b.btcAnchor.height}</div></div><div class="small muted">${ago(b.timestamp)}</div></div>`).join('') || '<div class="empty">Waiting for the first block…</div>'}</div>
     </div>
     <div class="card"><h2>Bitcoin anchor feed <a class="aside" href="#/mining">Proof of Green</a></h2>
       <div class="feed">${btc.map((h) => `<div class="feed-item"><div class="blockbadge ${h.green ? 'g' : ''}">${h.height}</div><div><div>${h.green ? `<span class="pill green"><span class="d"></span>Green</span> <a href="#/miner/${h.minerId}">${esc(h.minerName)}</a>` : '<span class="pill grey">Not accredited</span> <span class="addr muted">' + esc(short(h.minerAddress, 10)) + '</span>'}</div><div class="small muted mono">${short(h.hash, 12)}</div></div><div class="small muted">${ago(h.time)}</div></div>`).join('')}</div>
@@ -249,7 +250,9 @@ async function viewBlock(id) {
     <div>Consensus</div><div>${modePill(h.mode)} ${h.activeMiner ? `active miner <a href="#/miner/${h.activeMiner}">${h.activeMiner}</a>` : 'fallback validator'}</div>
     <div>Block generator</div><div>${addrLink(h.generator, h.generator)}</div>
     <div>Bitcoin anchor</div><div>#${h.btcAnchor.height} · <span class="mono">${short(h.btcAnchor.hash, 14)}</span> · ${b.btcHeaders.length} new header(s) verified</div>
-    <div>Piggy Bank emission</div><div>${F(h.reward, 6)} FDK</div>
+    <div>Piggy Bank production payment</div><div>${F(h.reward, 6)} FDK</div>
+    <div>Gas used</div><div>${Number(h.gasUsed || 0).toLocaleString('en-GB')} · base fee ${F(h.baseFeePerGas || 0, 9)} FDK/gas</div>
+    <div>State root</div><div class="mono small">${esc(h.stateRoot || '')}</div>
     <div>Network fees</div><div>${F(h.fees, 6)} FDK</div>
     <div>Transaction root</div><div class="mono">${h.txRoot}</div>
     <div>State root</div><div class="mono">${h.stateRoot}</div>
@@ -292,17 +295,23 @@ async function viewTx(hash) {
   const t = await api.get('/api/tx/' + hash);
   if (t.status === 'rejected') return `${head('Transaction', 'Rejected')}<div class="note">This transaction was rejected by the block producer: <b>${esc(t.error)}</b></div>`;
   const tx = t.tx;
+  const contract = Object.entries(STATUS.contracts || {}).find(([, a]) => a === tx.to)?.[0];
   return `${head('Transaction', TX_LABEL[tx.type] || tx.type)}
   <div class="card"><div class="kv">
     <div>Hash</div><div class="mono">${tx.hash}</div>
-    <div>Status</div><div>${t.status === 'confirmed' ? `<span class="pill green"><span class="d"></span>Confirmed</span> in ${blockLink(t.height)} · ${t.confirmations} confirmation(s)` : '<span class="pill grad">Pending</span>'}</div>
+    <div>Status</div><div>${t.status === 'confirmed' ? `<span class="pill green"><span class="d"></span>Confirmed</span> in ${blockLink(t.height)} · ${t.confirmations} confirmation(s)` : t.status === 'failed' ? `<span class="pill grey">Reverted</span> in ${blockLink(t.height)}: <b>${esc(t.error)}</b>` : '<span class="pill grad">Pending</span>'}</div>
     ${t.timestamp ? `<div>Time</div><div>${date(t.timestamp)}</div>` : ''}
     <div>From</div><div>${addrLink(tx.from, tx.from)}</div>
+    <div>To</div><div>${tx.to ? `${contract ? `<span class="pill grey">${esc(contract)}</span> ` : ''}${addrLink(tx.to, tx.to)}` : 'contract creation'}</div>
     <div>Nonce</div><div>${tx.nonce}</div>
-    <div>Network fee</div><div>${F(tx.fee, 6)} FDK <span class="muted small">(utility)</span></div>
+    <div>Gas</div><div>${t.gasUsed ? `${Number(t.gasUsed).toLocaleString('en-GB')} used of ${Number(tx.gasLimit).toLocaleString('en-GB')}` : `limit ${Number(tx.gasLimit).toLocaleString('en-GB')}`}</div>
+    <div>Network fee</div><div>${F(t.fee || tx.fee, 6)} FDK <span class="muted small">(gas, paid in the native utility token)</span></div>
     <div>Effects</div><div>${(t.events || []).map(describeEvent).join('<br>') || '—'}</div>
   </div></div>
-  <div class="card section"><h2>Payload</h2><pre class="code">${esc(JSON.stringify(tx.payload, null, 2))}</pre></div>`;
+  <div class="grid g2 section">
+    <div class="card"><h2>Decoded action</h2><pre class="code">${esc(JSON.stringify(tx.payload, null, 2))}</pre></div>
+    <div class="card"><h2>EVM transaction</h2><pre class="code">${esc(JSON.stringify({ type: tx.evmType === 2 ? 'EIP-1559' : tx.evmType, to: tx.to, value: tx.value, input: tx.data.length > 202 ? tx.data.slice(0, 202) + '…' : tx.data, logs: (t.logs || []).length }, null, 2))}</pre></div>
+  </div>`;
 }
 
 async function viewAddress(addr) {
@@ -350,7 +359,7 @@ async function viewWallet() {
           <label>Asset<select name="asset"><option value="STABLE">${esc(SYM())} (payment)</option><option value="FDK">FDK (utility)</option></select></label>
           <label>Amount<input name="amount" inputmode="decimal" placeholder="0.00" required></label>
         </div>
-        <div class="actions"><button class="btn">Sign and send</button><span class="small muted">Network fee: ${F(STATUS.params.minFee, 4)} FDK</span></div>
+        <div class="actions"><button class="btn">Sign and send</button><span class="small muted">Gas: ${F(BigInt(STATUS.params.minGasPrice) * 2n, 9)} FDK per gas at most</span></div>
       </form>
     </div>
     <div class="card"><h2>Retire or transfer credits</h2>
@@ -552,7 +561,7 @@ async function viewMining() {
   const active = Wallet.active();
   const me = active ? gens.find((g) => g.address === active.address) : null;
   const greenSince = s.pog.lastGreenBtcHeight >= 0 ? s.pog.anchorHeight - s.pog.lastGreenBtcHeight : null;
-  return `${head('Proof of Green', 'Green mining and block production', 'Accredited green Bitcoin miners earn FDK from the Piggy Bank. When one of them wins a Bitcoin block, its linked block generators take turns producing Fedrok blocks. If no green Bitcoin block appears within the green window, the fallback validator keeps the chain running.')}
+  return `${head('Proof of Green', 'Green mining and block production', 'Accredited green Bitcoin miners and their block generators are paid from the Piggy Bank for producing Fedrok blocks: a fee for work done, not a return on holding FDK. When an accredited miner wins a Bitcoin block, its generators take turns producing blocks; the ProofOfGreen system contract enforces the schedule. If no green Bitcoin block appears within the green window, the fallback validator keeps the chain running.')}
   <div class="grid g4">
     ${kpi('Consensus mode', sched.mode === 'green' ? 'Green' : 'Fallback', sched.mode === 'green' ? `active miner ${esc(sched.miner)}` : 'waiting for a green Bitcoin block', 'green')}
     ${kpi('Green window', `${greenSince === null ? '—' : greenSince} / ${s.params.greenWindow}`, 'Bitcoin blocks since last green block')}
@@ -563,7 +572,7 @@ async function viewMining() {
     <div class="rr">${slots.map((x, i) => `<div class="slot ${i === 0 ? 'now' : ''}"><b>${i === 0 ? 'Now' : `+${i * s.params.blockTimeMs / 1000}s`}</b>${addrLink(x.g)}</div>`).join('')}</div>
     <p class="small muted" style="margin:12px 0 0">If a generator misses its ${s.params.blockTimeMs / 1000}-second slot, the next generator in line produces the block, so no single node can halt the chain.</p>
   </div>
-  <div class="card section"><h2>Accredited miners</h2>${table(['Miner', 'Energy', '#Units', 'Generators', '#Green blocks', '#Rewards (FDK)', 'Status'], miners.map((m) => `<tr><td><a href="#/miner/${m.id}">${esc(m.name)}</a><div class="small muted">${m.id}</div></td><td>${esc(m.energy)}<div class="small muted">${esc(m.site)}</div></td><td class="num">${m.units}</td><td>${m.generators.length} ${m.publicGenerators ? '<span class="pill grey">public</span>' : '<span class="pill grey">private</span>'}</td><td class="num">${m.greenBlocks}</td><td class="num">${F(m.rewardsEarned, 2)}</td><td>${m.active ? (s.schedule.miner === m.id ? '<span class="pill grad">producing</span>' : '<span class="pill green">accredited</span>') : `<span class="pill warn">${esc(m.revokedReason || 'inactive')}</span>`}</td></tr>`), 'No accredited miners yet. Auditors accredit miners in the Console.')}</div>
+  <div class="card section"><h2>Accredited miners</h2>${table(['Miner', 'Energy', '#Units', 'Generators', '#Green blocks', '#Paid for production (FDK)', 'Status'], miners.map((m) => `<tr><td><a href="#/miner/${m.id}">${esc(m.name)}</a><div class="small muted">${m.id}</div></td><td>${esc(m.energy)}<div class="small muted">${esc(m.site)}</div></td><td class="num">${m.units}</td><td>${m.generators.length} ${m.publicGenerators ? '<span class="pill grey">public</span>' : '<span class="pill grey">private</span>'}</td><td class="num">${m.greenBlocks}</td><td class="num">${F(m.rewardsEarned, 2)}</td><td>${m.active ? (s.schedule.miner === m.id ? '<span class="pill grad">producing</span>' : '<span class="pill green">accredited</span>') : `<span class="pill warn">${esc(m.revokedReason || 'inactive')}</span>`}</td></tr>`), 'No accredited miners yet. Auditors accredit miners in the Console.')}</div>
   <div class="grid g2 section">
     <div class="card"><h2>Block generators</h2>${table(['Generator', '#Stake (FDK)', 'Linked miners', '#Blocks'], gens.map((g) => `<tr><td>${addrLink(g.address)}<div class="small muted">${esc(g.name)}</div></td><td class="num">${F(g.stake, 0)}</td><td>${g.links.map((l) => `<a href="#/miner/${l}">${l}</a>`).join('<br>') || '—'}</td><td class="num">${g.blocks}</td></tr>`), 'No generators yet.')}</div>
     <div class="card"><h2>Bitcoin chain (light client)</h2>${table(['Height', 'Miner', '#Age'], btc.map((h) => `<tr><td>${h.height}</td><td>${h.green ? `<span class="pill green"><span class="d"></span>Green</span> ${esc(h.minerName)}` : `<span class="muted mono">${esc(short(h.minerAddress, 10))}</span>`}</td><td class="num muted">${ago(h.time)}</td></tr>`))}</div>
@@ -590,8 +599,8 @@ async function viewMiner(id) {
   <div class="grid g4">
     ${kpi('Status', m.active ? 'Accredited' : 'Inactive', m.active ? `until ${day(m.expiresAt)}` : esc(m.revokedReason || ''), 'green')}
     ${kpi('Capacity', `${m.units}<small>units</small>`, `≈ ${m.units} × S9 (95 TH/s, 3.2 kW)`)}
-    ${kpi('Yearly reward', `${F(m.yearlyReward, 0)}<small>FDK</small>`, `${F(BigInt(m.yearlyReward) / BigInt(m.units), 0)} FDK per unit = tCO₂e reduced`, 'green')}
-    ${kpi('Rewards earned', `${F(m.rewardsEarned, 3)}<small>FDK</small>`, `${m.greenBlocks} green Bitcoin blocks`)}
+    ${kpi('Yearly production allowance', `${F(m.yearlyReward, 0)}<small>FDK</small>`, `${F(BigInt(m.yearlyReward) / BigInt(m.units), 0)} FDK per unit = tCO₂e reduced`, 'green')}
+    ${kpi('Paid for production', `${F(m.rewardsEarned, 3)}<small>FDK</small>`, `${m.greenBlocks} green Bitcoin blocks`)}
   </div>
   <div class="grid g2 section">
     <div class="card"><h2>Accreditation</h2><div class="kv">
@@ -602,7 +611,7 @@ async function viewMiner(id) {
       <div>Audit report</div><div>${esc(m.reportRef || '—')}</div>
       <div>Accredited</div><div>${date(m.accreditedAt)}</div>
       <div>Piggy Bank pre-fill</div><div>${F(m.prefill, 0)} FDK</div>
-      <div>Generator share</div><div>${(m.generatorShareBps / 100).toFixed(1)}% of block rewards</div>
+      <div>Generator share</div><div>${(m.generatorShareBps / 100).toFixed(1)}% of production payments</div>
       <div>Generators</div><div>${m.publicGenerators ? 'Public: any staked generator may link' : 'Private: owner approval required'}</div>
     </div></div>
     <div class="card"><h2>Linked block generators</h2>${table(['Generator'], m.generators.map((g) => `<tr><td>${addrLink(g, g)}</td></tr>`), 'No generators linked.')}
@@ -672,7 +681,7 @@ async function viewConsole() {
   ${isGov ? `<div class="card"><h2>Governance</h2>
       <form class="stack" id="addaud"><h3>Add an auditor</h3><div class="row"><label>Auditor address<input name="auditor" placeholder="0x…" required></label><label>Organisation<input name="name" required></label></div><div class="actions"><button class="btn">Add auditor</button></div></form>
       <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
-      <form class="stack" id="param"><h3>Change a network parameter</h3><div class="row"><label>Parameter<select name="key">${['blockTimeMs', 'greenWindow', 'marketFeeBps', 'maxGeneratorsPerMiner', 'maxTxPerBlock', 'minFee', 'minGeneratorStake', 'fdkPerUnitYear'].map((k) => `<option>${k}</option>`).join('')}</select></label><label>Value <span class="hint">FDK values in base units (18 decimals)</span><input name="value" required></label></div><div class="actions"><button class="btn ghost">Update parameter</button></div></form>
+      <form class="stack" id="param"><h3>Change a network parameter</h3><div class="row"><label>Parameter<select name="key">${['blockTimeMs', 'greenWindow', 'marketFeeBps', 'maxGeneratorsPerMiner', 'maxTxPerBlock', 'minGasPrice', 'minGeneratorStake', 'fdkPerUnitYear'].map((k) => `<option>${k}</option>`).join('')}</select></label><label>Value <span class="hint">FDK values in base units (18 decimals)</span><input name="value" required></label></div><div class="actions"><button class="btn ghost">Update parameter</button></div></form>
       <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
       <form class="stack" id="fallback"><h3>Fallback validator</h3><label>Address<input name="validator" value="${s.fallbackValidator}" required></label><div class="actions"><button class="btn ghost">Set fallback validator</button></div></form>
     </div>
@@ -687,13 +696,13 @@ function bindConsole() {
     const sims = await api.get('/api/btc-sim-miners');
     const m = sims[Number(d.sim)];
     const owner = d.owner.trim().toLowerCase();
-    const btcSig = signDigest(btcLinkMessage(m.address, owner, STATUS.chainId), m.privKey);
+    const btcSig = signRecoverable(btcLinkMessage(m.address, owner, STATUS.chainId, STATUS.contracts.ProofOfGreen), m.privKey);
     await submit('miner_accredit', { name: m.name, btcAddress: m.address, btcPubKey: m.pubKey, btcSig, owner, units: Number(d.units), auditDays: Number(d.auditDays), generatorShareBps: Math.round(Number(d.share) * 100), publicGenerators: d.publicGenerators === '1', site: m.site, energy: m.energy, reportRef: d.reportRef }, 'Accredit miner');
   });
   on('backmint', (d) => submit('fdk_back_mint', { batchId: d.batchId, quantityKg: tonnesToKg(d.tonnes).toString(), to: d.to ? d.to.trim().toLowerCase() : undefined }, `Back-mint ${d.tonnes} FDK`));
   on('smint', (d) => submit('stable_mint', { to: d.to.trim().toLowerCase(), amount: stable(d.amount).toString(), reserveRef: d.reserveRef }, `Mint ${d.amount} ${SYM()}`));
   on('addaud', (d) => submit('gov_add_auditor', { auditor: d.auditor.trim().toLowerCase(), name: d.name }, 'Add auditor'));
-  on('param', (d) => submit('gov_set_param', { key: d.key, value: ['minFee', 'minGeneratorStake', 'fdkPerUnitYear'].includes(d.key) ? d.value : Number(d.value) }, `Set ${d.key}`));
+  on('param', (d) => submit('gov_set_param', { key: d.key, value: String(d.value).trim() }, `Set ${d.key}`));
   on('fallback', (d) => submit('gov_set_fallback', { validator: d.validator.trim().toLowerCase() }, 'Set fallback validator'));
   document.querySelectorAll('[data-rmaud]').forEach((b) => b.addEventListener('click', () => submit('gov_remove_auditor', { auditor: b.dataset.rmaud }, 'Remove auditor')));
 }
@@ -702,39 +711,68 @@ function bindConsole() {
 async function viewDevelopers() {
   const s = STATUS;
   const origin = location.origin;
-  return `${head('Developers', 'Build on Fedrok', 'Every node exposes a REST API, JSON-RPC 2.0 and a live WebSocket feed. Keys and addresses use secp256k1 and Ethereum-style derivation, so existing key tooling works.')}
-  <div class="grid g3">
-    ${kpi('Chain ID', `<span style="font-size:16px">${esc(s.chainId)}</span>`, '', 'green')}
+  const C = s.contracts || {};
+  const CONTRACT_INFO = {
+    FedrokGovernance: 'Roles (governance, auditors, stablecoin issuer, fallback validator) and network parameters',
+    FDKIssuer: 'Capped FDK reserve: issues only for Piggy Bank pre-fills and auditor back-minting; burns',
+    FUSD: 'Settlement stablecoin stand-in (ERC-20, 6 decimals)',
+    CarbonRegistry: 'Environmental asset registry (ERC-1155, 1 unit = 1 kg CO₂e): issue, transfer, retire, back-mint',
+    CarbonMarketplace: 'Escrowed listings, atomic stablecoin settlement',
+    ProofOfGreen: 'Green miners, block generators, Bitcoin anchor, schedule and Piggy Bank (system contract)',
+    LegacyGarden: 'Personal Legacy Garden memorial tree registry',
+  };
+  return `${head('Developers', 'Build on Fedrok', 'Fedrok is EVM-compatible: transactions are standard signed Ethereum transactions, the protocol is a set of Solidity contracts, and every node speaks Ethereum JSON-RPC at /rpc. MetaMask, ethers.js, viem, Foundry and Hardhat work unchanged. FDK is the native gas token.')}
+  <div class="grid g4">
+    ${kpi('Chain ID', `<span style="font-size:16px">${esc(s.chainId)}</span>`, `<span class="mono">0x${Number(s.chainId).toString(16)}</span> · ${esc(s.network)}`, 'green')}
+    ${kpi('Execution', '<span style="font-size:16px">EVM</span>', 'Shanghai rules · EIP-1559 fees')}
+    ${kpi('Gas token', '<span style="font-size:16px">FDK</span>', `base fee ${F(s.params.minGasPrice, 9)} FDK/gas`, 'green')}
     ${kpi('This node', `<span style="font-size:16px">${esc(s.node)}</span>`, `${s.peers.length} peers connected`)}
-    ${kpi('Genesis', `<span class="mono" style="font-size:13px">${short(s.genesisHash, 10)}</span>`, '', 'green')}
   </div>
+  ${LOCAL ? '<div class="note plain section">This hosted demo runs a complete Fedrok node, EVM included, inside your browser tab, so external wallets cannot reach it. Run <code>npm run devnet</code> to get a JSON-RPC endpoint for MetaMask or Foundry.</div>' : `<div class="card section"><h2>Add Fedrok to MetaMask</h2><p class="small" style="margin-top:0">Network name <b>Fedrok ${esc(s.network)}</b> · RPC URL <code>${origin}/rpc</code> · Chain ID <code>${esc(s.chainId)}</code> · Currency <b>FDK</b></p><div class="actions"><button class="btn sm" id="add-metamask">Add network to wallet</button></div></div>`}
+  <div class="card section"><h2>System contracts</h2><p class="small" style="margin-top:0">Deployed at genesis at the same addresses on every Fedrok network. Sources in <code>contracts/</code>, ABIs in <code>src/evm/artifacts.json</code>.</p>${table(['Contract', 'Address', 'Role'], Object.entries(C).map(([n, a]) => `<tr><td><b>${esc(n)}</b></td><td class="mono small">${esc(a)}</td><td class="small">${esc(CONTRACT_INFO[n] || '')}</td></tr>`))}</div>
   <div class="grid g2 section">
-    <div class="card"><h2>JSON-RPC</h2><pre class="code">curl -s ${origin}/rpc \\
-  -H 'content-type: application/json' \\
-  -d '{"jsonrpc":"2.0","id":1,"method":"fdk_blockNumber"}'</pre>
-      <p class="small">Methods: <code>fdk_chainId</code> <code>fdk_blockNumber</code> <code>fdk_getBlockByNumber</code> <code>fdk_getBlockByHash</code> <code>fdk_getTransaction</code> <code>fdk_sendRawTransaction</code> <code>fdk_getAccount</code> <code>fdk_getBalance</code> <code>fdk_getNonce</code> <code>fdk_status</code> <code>pog_getSchedule</code> <code>pog_getMiners</code> <code>pog_getGenerators</code> <code>carbon_getBatches</code> <code>carbon_getBatch</code> <code>carbon_getListings</code> <code>carbon_getRetirement</code> <code>garden_getGarden</code> <code>garden_getTree</code> <code>garden_getDedication</code></p>
+    <div class="card"><h2>Ethereum JSON-RPC</h2><pre class="code">cast block-number --rpc-url ${origin}/rpc
+cast call ${C.FUSD || '0x…'} \
+  "balanceOf(address)(uint256)" 0xYourAddress \
+  --rpc-url ${origin}/rpc</pre>
+      <p class="small">Standard: <code>eth_chainId</code> <code>eth_blockNumber</code> <code>eth_getBalance</code> <code>eth_getTransactionCount</code> <code>eth_getCode</code> <code>eth_getStorageAt</code> <code>eth_call</code> <code>eth_estimateGas</code> <code>eth_gasPrice</code> <code>eth_feeHistory</code> <code>eth_sendRawTransaction</code> <code>eth_getTransactionByHash</code> <code>eth_getTransactionReceipt</code> <code>eth_getBlockByNumber</code> <code>eth_getBlockByHash</code> <code>eth_getLogs</code> <code>net_version</code> <code>web3_clientVersion</code></p>
+      <p class="small">Fedrok read model: <code>fdk_status</code> <code>fdk_getAccount</code> <code>pog_getSchedule</code> <code>pog_getMiners</code> <code>carbon_getBatches</code> <code>carbon_getListings</code> <code>carbon_getRetirement</code> <code>garden_getGarden</code> <code>garden_getTree</code> <code>garden_getDedication</code></p>
     </div>
-    <div class="card"><h2>JavaScript SDK</h2><pre class="code">import { FedrokClient } from './src/core/client.js';
-import { stable, tonnesToKg } from './src/core/units.js';
+    <div class="card"><h2>ethers.js</h2><pre class="code">import { JsonRpcProvider, Wallet, Contract } from 'ethers';
 
-const c = new FedrokClient('${origin}');
-// buy 10 t from a listing, paying in ${esc(SYM())}
-await c.sendAndWait(privKey, 'market_buy', {
-  listingId: 'LST-000001',
-  quantityKg: tonnesToKg('10').toString(),
-});</pre></div>
+const provider = new JsonRpcProvider('${origin}/rpc');
+const wallet = new Wallet(privKey, provider);
+const market = new Contract('${C.CarbonMarketplace || '0x…'}', [
+  'function buy(uint256 listingId, uint256 quantityKg, uint256 maxPricePerTonne)',
+], wallet);
+// buy 10 t from listing LST-000001, paid in ${esc(SYM())}
+// (approve the marketplace on the ${esc(SYM())} contract first)
+await (await market.buy(1, 10_000, 0)).wait();</pre>
+    <p class="small">Or use the bundled SDK, which encodes the same calls: <code>new FedrokClient(url).sendAndWait(privKey, 'market_buy', { listingId: 'LST-000001', quantityKg: '10000' })</code>.</p></div>
   </div>
   <div class="card section"><h2>REST endpoints</h2>${table(['Method', 'Path', 'Description'], [
     ['GET', '/api/status', 'Chain, consensus, supply and peer status'], ['GET', '/api/blocks?limit=&before=', 'Recent block summaries'], ['GET', '/api/block/:heightOrHash', 'Full block with transactions and Bitcoin headers'],
-    ['GET', '/api/tx/:hash', 'Transaction with status and decoded events'], ['GET', '/api/account/:address', 'Balances, credits, roles, history, next nonce'], ['POST', '/api/tx', 'Submit a signed transaction'],
+    ['GET', '/api/tx/:hash', 'Transaction with status, gas, logs and decoded events'], ['GET', '/api/account/:address', 'Balances, credits, roles, history, next nonce'], ['POST', '/api/tx', 'Submit a signed raw Ethereum transaction: { raw }'], ['GET', '/api/contracts', 'System contract addresses'],
     ['GET', '/api/batches · /api/batch/:id', 'Carbon credit batches, holders, retirements'], ['GET', '/api/listings', 'Open marketplace listings'], ['GET', '/api/retirements · /api/retirement/:id', 'Retirement certificates'],
     ['GET', '/api/miners · /api/generators · /api/auditors', 'Proof of Green participants'],
     ['GET', '/api/gardens · /api/garden/:id', 'Legacy Gardens with batches, stats, site plan and field records'], ['GET', '/api/tree/:id · /api/dedication/:id', 'Tree record (plantings, inspections, replacements) and subscribership certificate'], ['GET', '/api/dedications?holder=&garden=', 'Dedications held by a member account'], ['GET', '/api/btc?limit=', 'Bitcoin headers seen by the light client'], ['GET', '/api/search?q=', 'Resolve a block, tx, address, batch, retirement or miner'],
     ['WS', '/ws', 'Live feed of blocks, transactions and Bitcoin headers'],
   ].map(([m, p, d]) => `<tr><td><span class="pill grey">${m}</span></td><td class="mono">${p}</td><td>${d}</td></tr>`))}</div>
-  <div class="card section"><h2>Transaction types</h2><p class="small" style="margin-top:0">All transactions pay a small network fee in FDK (utility). Payments between parties use ${esc(SYM())}.</p>
+  <div class="card section"><h2>Fedrok actions</h2><p class="small" style="margin-top:0">The wallet and SDK name each contract call as a Fedrok action; the explorer decodes mined transactions back into these names. All transactions pay gas in FDK (utility). Payments between parties use ${esc(SYM())}.</p>
     <div class="rr">${Object.entries(TX_LABEL).map(([k, v]) => `<div class="slot"><b>${k}</b>${v}</div>`).join('')}</div></div>
   <div class="card section"><h2>Peers</h2>${table(['Node', 'Height', 'Direction'], s.peers.map((p) => `<tr><td>${esc(p.name)}<div class="small muted mono">${esc(p.url || '')}</div></td><td>${p.height}</td><td>${p.inbound ? 'inbound' : 'outbound'}</td></tr>`), 'No peers connected.')}</div>`;
+}
+
+function bindDevelopers() {
+  document.getElementById('add-metamask')?.addEventListener('click', async () => {
+    if (!window.ethereum) return toast('No browser wallet found. Install MetaMask or another EVM wallet.', 'err');
+    try {
+      await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x' + Number(STATUS.chainId).toString(16), chainName: `Fedrok ${STATUS.network}`, nativeCurrency: { name: 'FDK', symbol: 'FDK', decimals: 18 }, rpcUrls: [location.origin + '/rpc'] }] });
+      toast('Fedrok network added to your wallet.', 'ok');
+    } catch (e) {
+      toast(esc(e.message || String(e)), 'err');
+    }
+  });
 }
 
 // ---------------------------------------------------------- legacy garden
@@ -1105,7 +1143,7 @@ const ROUTES = [
   [/^\/dedication\/(.+)$/, viewDedication],
   [/^\/member$/, viewMember],
   [/^\/steward$/, viewSteward, bindSteward],
-  [/^\/developers$/, viewDevelopers],
+  [/^\/developers$/, viewDevelopers, bindDevelopers],
 ];
 const LIVE = ['/', '/explorer', '/mining', '/garden'];
 

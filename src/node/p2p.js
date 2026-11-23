@@ -1,6 +1,7 @@
 // Peer-to-peer gossip over WebSocket: transactions, blocks and chain sync.
 import { WebSocketServer, WebSocket } from 'ws';
 import crypto from 'node:crypto';
+import { stripBlock } from '../evm/chain.js';
 
 const SYNC_BATCH = 200;
 
@@ -23,8 +24,8 @@ export class P2P {
     this.server = new WebSocketServer({ port: this.port, maxPayload: 16 * 1024 * 1024 });
     this.server.on('connection', (ws, req) => this._attach(ws, { inbound: true, addr: req.socket.remoteAddress }));
     for (const url of this.seedPeers) this._dial(url, 500);
-    this.chain.on('block', (block) => block && this.broadcast({ t: 'block', block }));
-    this.chain.on('tx', (tx) => this.broadcast({ t: 'tx', tx }));
+    this.chain.on('block', (block) => block && this.broadcast({ t: 'block', block: stripBlock(block) }));
+    this.chain.on('tx', (tx) => this.broadcast({ t: 'tx', tx: { hash: tx.hash, raw: tx.raw } }));
     this.log.info(`p2p listening on :${this.port}`);
   }
 
@@ -82,12 +83,12 @@ export class P2P {
         info.height = msg.height;
         if (msg.height > this.chain.height) this._requestFrom(ws, this.chain.height + 1);
         // share mempool so new peers can include pending txs
-        for (const tx of this.chain.mempool.values()) this._send(ws, { t: 'tx', tx });
+        for (const tx of this.chain.mempool.values()) this._send(ws, { t: 'tx', tx: { hash: tx.hash, raw: tx.raw } });
         break;
       case 'tx': {
         if (this.seen.has('tx:' + msg.tx?.hash)) return;
         try {
-          const r = this.chain.addTx(msg.tx); // emits 'tx' -> rebroadcast
+          const r = await this.chain.addTx(msg.tx); // emits 'tx' -> rebroadcast
           if (r.duplicate) this.seen.add('tx:' + r.hash);
         } catch {
           this.seen.add('tx:' + msg.tx?.hash);
@@ -98,28 +99,28 @@ export class P2P {
         const b = msg.block;
         if (!b?.header || this.seen.has('block:' + b.hash)) return;
         info.height = Math.max(info.height, b.header.height);
-        this._onBlock(ws, b);
+        await this._onBlock(ws, b);
         break;
       }
       case 'getBlocks': {
         const from = Math.max(1, Number(msg.from) || 1);
-        const blocks = this.chain.blocks.slice(from - 1, from - 1 + SYNC_BATCH);
+        const blocks = this.chain.blocks.slice(from - 1, from - 1 + SYNC_BATCH).map(stripBlock);
         this._send(ws, { t: 'blocks', from, blocks, height: this.chain.height });
         break;
       }
       case 'blocks':
-        this._onBlocks(ws, msg);
+        await this._onBlocks(ws, msg);
         break;
     }
   }
 
-  _onBlock(ws, b) {
+  async _onBlock(ws, b) {
     const h = b.header;
     if (h.height <= this.chain.height && this.chain.getBlock(h.height)?.hash === b.hash) return;
     if (h.height === this.chain.height + 1 && h.prevHash === this.chain.state.tipHash) {
       if (h.timestamp > Date.now() + 3000) return this.log.warn(`block ${h.height} from the future, ignored`);
       try {
-        this.chain.addBlock(b); // emits 'block' -> rebroadcast
+        await this.chain.addBlock(b); // emits 'block' -> rebroadcast
       } catch (e) {
         this.seen.add('block:' + b.hash);
         this.log.warn(`rejected block ${h.height} from peer: ${e.message}`);
@@ -136,7 +137,7 @@ export class P2P {
     this._send(ws, { t: 'getBlocks', from });
   }
 
-  _onBlocks(ws, msg) {
+  async _onBlocks(ws, msg) {
     const blocks = msg.blocks || [];
     if (!blocks.length) return;
     // Skip blocks we already have identically.
@@ -150,7 +151,7 @@ export class P2P {
     if (rest[0].header.height === this.chain.height + 1 && rest[0].header.prevHash === this.chain.state.tipHash) {
       for (const b of rest) {
         try {
-          this.chain.addBlock(b);
+          await this.chain.addBlock(b);
         } catch (e) {
           this.log.warn(`sync: block ${b.header.height} invalid: ${e.message}`);
           return;
@@ -158,7 +159,7 @@ export class P2P {
       }
     } else {
       // Divergence. Accumulate the peer's branch and try the fork choice rule.
-      const ok = this.chain.tryReorg(rest);
+      const ok = await this.chain.tryReorg(rest);
       if (!ok && rest[0].header.height > 1) {
         const back = Math.max(1, rest[0].header.height - SYNC_BATCH);
         if (back < rest[0].header.height) return this._requestFrom(ws, back);
