@@ -388,24 +388,54 @@ async function finishSignIn(privKey, profile, meta = {}) {
 }
 
 const utf8Hex = (t) => '0x' + [...new TextEncoder().encode(t)].map((b) => b.toString(16).padStart(2, '0')).join('');
+// A wallet signature becomes the Fedrok key: sha256 of a deterministic
+// (RFC 6979) signature over a fixed sign-in message. Same wallet, same
+// message, same Fedrok account on any device; the wallet's own keys and
+// funds are never touched.
+function signInFromSignature(sig, label, meta) {
+  const key = sha256Hex(String(sig));
+  return api.account(addressFromPrivate(key)).then((acct) => {
+    if (acct.profile) return finishSignIn(key, acct.profile, meta);
+    modal(`<h2>Your profile</h2><p class="small">${esc(label)} is connected. Add the name people will see on your project pages.</p>
+      <label>Your name<input name="name" minlength="2" maxlength="80" required autocomplete="name"></label>
+      <label>Organisation <span class="hint">optional</span><input name="organisation" maxlength="120" autocomplete="organization"></label>
+      <div class="actions"><button class="btn" type="submit" data-label="Continue">Continue</button><button class="btn ghost" data-close>Cancel</button></div>`,
+    (d) => { finishSignIn(key, { name: d.name.trim(), organisation: d.organisation.trim() }, meta); });
+  });
+}
+const signInMessage = (wallet) => `Sign in to Fedrok Registry\n\nThis signature creates your Fedrok registry key on ${STATUS.network}. It does not move any funds and costs no gas.\n\nWallet: ${wallet}`;
+
 async function signInWithBrowserWallet() {
   const eth = window.ethereum;
   if (!eth) return toast('No browser wallet found. Install MetaMask, or continue with email.', 'err');
   try {
     const [account] = await eth.request({ method: 'eth_requestAccounts' });
-    const msg = `Sign in to Fedrok Registry\n\nThis signature creates your Fedrok registry key on ${STATUS.network}. It does not move any funds and costs no gas.\n\nWallet: ${account.toLowerCase()}`;
-    const sig = await eth.request({ method: 'personal_sign', params: [utf8Hex(msg), account] });
-    const key = '0x' + sha256Hex(String(sig).toLowerCase());
-    const address = addressFromPrivate(key);
-    const acct = await api.account(address);
-    if (acct.profile) return finishSignIn(key, acct.profile, { via: 'wallet', linked: account.toLowerCase() });
-    modal(`<h2>Your profile</h2><p class="small">Wallet ${short(account.toLowerCase(), 6)} is connected. Add the name people will see on your project pages.</p>
-      <label>Your name<input name="name" minlength="2" maxlength="80" required autocomplete="name"></label>
-      <label>Organisation <span class="hint">optional</span><input name="organisation" maxlength="120" autocomplete="organization"></label>
-      <div class="actions"><button class="btn" type="submit" data-label="Continue">Continue</button><button class="btn ghost" data-close>Cancel</button></div>`,
-    (d) => { finishSignIn(key, { name: d.name.trim(), organisation: d.organisation.trim() }, { via: 'wallet', linked: account.toLowerCase() }); });
+    const a = account.toLowerCase();
+    const sig = await eth.request({ method: 'personal_sign', params: [utf8Hex(signInMessage(a)), account] });
+    await signInFromSignature(String(sig).toLowerCase(), `Wallet ${short(a, 6)}`, { via: 'wallet', linked: a });
   } catch (e) {
     toast(`Wallet sign-in cancelled: ${esc(e.message || e)}`, 'err');
+  }
+}
+
+// Keplr (Cosmos wallets, as used on Regen Network). Keplr signs the sign-in
+// message with ADR-36 signArbitrary; the Fedrok key is derived from that
+// signature, so the Keplr account maps to one Fedrok owner address.
+const KEPLR_CHAINS = ['regen-1', 'cosmoshub-4'];
+async function signInWithKeplr() {
+  const keplr = window.keplr;
+  if (!keplr) return toast('Keplr was not found in this browser. Install the Keplr extension, or continue with email.', 'err');
+  try {
+    let chainId = null;
+    for (const c of KEPLR_CHAINS) {
+      try { await keplr.enable(c); chainId = c; break; } catch {}
+    }
+    if (!chainId) throw new Error('Keplr did not allow access to Regen Network or the Cosmos Hub');
+    const { bech32Address, name } = await keplr.getKey(chainId);
+    const res = await keplr.signArbitrary(chainId, bech32Address, signInMessage(bech32Address));
+    await signInFromSignature(res.signature, `Keplr account ${name ? name + ' · ' : ''}${bech32Address.slice(0, 10)}…${bech32Address.slice(-4)}`, { via: 'keplr', linked: bech32Address });
+  } catch (e) {
+    toast(`Keplr sign-in cancelled: ${esc(e.message || e)}`, 'err');
   }
 }
 
@@ -414,7 +444,8 @@ async function viewWallet() {
   const active = Wallet.active();
   if (!active) {
     const hasWallet = typeof window.ethereum !== 'undefined';
-    const known = w.items.filter((i) => i.via === 'email' || i.via === 'wallet');
+    const hasKeplr = typeof window.keplr !== 'undefined';
+    const known = w.items.filter((i) => ['email', 'wallet', 'keplr'].includes(i.via));
     return `${head('My account', 'Sign in to Fedrok', 'Your projects belong to your Fedrok account. Only you can edit, lock & submit or retire them.')}
     ${known.length ? `<div class="card" style="margin-bottom:18px"><h2>Welcome back</h2><div class="actions">${known.map((i) => `<button class="btn ghost" data-select="${i.address}">Continue as ${esc(i.name)}${i.email ? ` <span class="small muted">(${esc(i.email)})</span>` : ''}</button>`).join('')}</div></div>` : ''}
     <div class="grid g2 signin">
@@ -428,9 +459,12 @@ async function viewWallet() {
         <p class="small muted" style="margin-bottom:0">No crypto wallet needed: Fedrok creates a secure account key for you in this browser and signs your records with it.${LOCAL ? ' In this demo no email is sent.' : ''}</p>
       </div>
       <div class="card"><h2>Use a crypto wallet</h2>
-        <p class="small" style="margin-top:0">Sign in with MetaMask or another browser wallet. You approve one signature message, which creates your Fedrok registry key. No funds move and it costs no gas. The same wallet gives you the same account on any device.</p>
-        <div class="actions"><button class="btn ${hasWallet ? '' : 'ghost'}" id="signin-wallet" type="button">${icon('wallet')} ${hasWallet ? 'Connect wallet' : 'Connect MetaMask'}</button></div>
-        ${hasWallet ? '' : '<p class="small muted">No browser wallet was found in this browser. Install MetaMask, or continue with email.</p>'}
+        <p class="small" style="margin-top:0">Sign in with MetaMask, Keplr or another browser wallet. You approve one signature message, which creates your Fedrok registry key. No funds move and it costs no gas. The same wallet gives you the same account on any device.</p>
+        <div class="actions">
+          <button class="btn ${hasWallet ? '' : 'ghost'}" id="signin-wallet" type="button">${icon('wallet')} Connect MetaMask</button>
+          <button class="btn ${hasKeplr ? '' : 'ghost'}" id="signin-keplr" type="button">${icon('wallet')} Connect Keplr</button>
+        </div>
+        <p class="small muted">${hasWallet || hasKeplr ? `Found in this browser: ${[hasWallet && 'an Ethereum wallet (MetaMask)', hasKeplr && 'Keplr'].filter(Boolean).join(' and ')}.` : 'No browser wallet was found in this browser. Install MetaMask or Keplr, or continue with email.'} Keplr works with your Regen Network or Cosmos Hub account.</p>
         <details style="margin-top:18px"><summary class="small">I have a Fedrok account key</summary>
           <form class="stack" id="import" style="margin-top:12px"><label>Your name<input name="name" minlength="2" maxlength="80" required></label><label>Account key<input name="key" placeholder="0x… (64 hex characters)" required autocomplete="off"></label><div class="actions"><button class="btn ghost">Sign in with key</button></div></form>
         </details>
@@ -439,7 +473,7 @@ async function viewWallet() {
   }
   const acct = await api.account(active.address);
   const prof = acct.profile;
-  const via = active.via === 'email' ? `Signed in with ${esc(active.email)}` : active.via === 'wallet' ? `Signed in with wallet ${short(active.linked, 6)}` : 'Signed in with an account key';
+  const via = active.via === 'email' ? `Signed in with ${esc(active.email)}` : active.via === 'wallet' ? `Signed in with wallet ${short(active.linked, 6)}` : active.via === 'keplr' ? `Signed in with Keplr ${esc(active.linked.slice(0, 10))}…${esc(active.linked.slice(-4))}` : 'Signed in with an account key';
   return `${head('My account', esc(prof?.name || active.name), `${prof?.organisation ? esc(prof.organisation) + ' · ' : ''}${via}`, '<div class="actions"><button class="btn ghost sm" id="signout" type="button">Sign out</button></div>')}
   <div class="grid g2">
     <div class="card"><h2>My projects <a class="aside" href="#/new">Register a project</a></h2>${table(['Project', 'Status'], acct.projects.map((p) => `<tr><td><a href="#/project/${p.id}">${esc(p.name)}</a><div class="small muted">${esc(p.projectType)} · <span class="mono">${p.id}</span></div></td><td>${statusPill(p.status)}</td></tr>`), 'You have no projects yet. <a href="#/new">Register or propose one</a>.')}</div>
@@ -489,6 +523,7 @@ function bindWallet() {
     finishSignIn(known ? known.privKey : generatePrivateKey(), { name: d.name.trim(), organisation: d.organisation.trim() }, { via: 'email', email });
   });
   document.getElementById('signin-wallet')?.addEventListener('click', signInWithBrowserWallet);
+  document.getElementById('signin-keplr')?.addEventListener('click', signInWithKeplr);
   on('import', (d) => {
     const k = d.key.trim().startsWith('0x') ? d.key.trim() : '0x' + d.key.trim();
     if (!/^0x[0-9a-fA-F]{64}$/.test(k)) return toast('An account key is 64 hex characters.', 'err');
