@@ -8,7 +8,7 @@ An EVM-compatible Layer 1 for environmental asset records, built for Fedrok AG. 
 
 ## Hosted demo
 
-`npm run build:demo` builds `dist/fedrok-demo.html`: the full web app plus a complete network running inside the browser (simulated Bitcoin chain, a validating node with three block generators, faucet and demo data). It runs the same EVM, Solidity contracts, Proof of Green block rules and API layer (`src/node/api-core.js`) as a server node; only the transport differs. Each visitor gets their own network, saved in their browser. No backend is needed, so the file works offline for presentations.
+`npm run build:demo` builds `dist/fedrok-demo.html`: the full web app plus a complete network running inside the browser (simulated Bitcoin chain, a validating node with three block generators, faucet and demo data). It runs the same EVM, Solidity contracts, Proof of Green block rules and API layer (`src/node/api-core.js`) as a server node; only the transport differs. Each visitor gets their own network, saved in their browser. No backend is needed, so the file works offline for presentations. The build seeds that network with the demo data first and embeds it, so the page opens on a working network (**Reset network** returns to it); `npm run build:demo -- --no-snapshot` skips this and seeds on first visit instead.
 
 ## Quick start
 
