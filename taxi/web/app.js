@@ -69,7 +69,7 @@ function renderNav(active) {
 const COLORS = { on: '#056032', parked: '#404042', flag: '#f0492c', garage: '#056032' };
 function makeMap(el, { zoom = 11, center = MALTA_CENTRE } = {}) {
   if (!L?.map) { el.innerHTML = '<div class="map-fallback">The map could not load (offline?). All locations are still listed below.</div>'; return null; }
-  const m = L.map(el, { scrollWheelZoom: false, attributionControl: true }).setView(center, zoom);
+  const m = L.map(el, { scrollWheelZoom: false, attributionControl: true, fadeAnimation: false }).setView(center, zoom);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
