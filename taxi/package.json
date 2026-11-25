@@ -1,0 +1,24 @@
+{
+  "name": "fedrok-taxi",
+  "version": "0.1.0",
+  "description": "Fedrok Taxi Integrity: palm-vein shift sign-in/sign-out and parked-location records anchored on a permissioned ledger (Malta pilot).",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build-artifact.js",
+    "demo": "node scripts/demo.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@noble/curves": "2.0.1",
+    "@noble/hashes": "2.0.1",
+    "leaflet": "1.9.4"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
